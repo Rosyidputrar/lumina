@@ -151,6 +151,8 @@ export function loadConfig(overrides = {}) {
 
     // Strategy profile: 'breakout' (default), 'trend' or 'classic'. The owner can switch it.
     strategy: ['breakout', 'trend', 'classic'].includes(env.LUMINA_STRATEGY) ? env.LUMINA_STRATEGY : 'breakout',
+    // Asset classes the breakout profile trades: 'crypto' (default) or 'crypto,metal'.
+    breakoutClasses: String(env.LUMINA_BREAKOUT_CLASSES ?? 'crypto').split(','),
 
     // Costs by asset class, bps per side. LUMINA_COSTS overrides any class, e.g.
     // {"crypto":{"spreadBps":2,"slippageBps":1,"feeBps":8}}. The older paper

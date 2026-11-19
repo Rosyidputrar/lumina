@@ -8,12 +8,18 @@
  * twice. Override per deployment with LUMINA_COSTS (JSON of the same shape).
  */
 export const DEFAULT_COSTS = {
-  crypto: { spreadBps: 2, slippageBps: 1, feeBps: 10 },
-  fx: { spreadBps: 1, slippageBps: 0.5, feeBps: 0.35 },
-  metal: { spreadBps: 2, slippageBps: 1, feeBps: 0.35 },
-  index: { spreadBps: 1.5, slippageBps: 1, feeBps: 0 },
-  other: { spreadBps: 2, slippageBps: 1, feeBps: 4 },
+  // financeBpsPerDay is the overnight cost of holding (swap or funding) on the
+  // position's notional, charged per calendar day and in both directions. It is
+  // deliberately conservative: real swaps pay one side on some pairs.
+  crypto: { spreadBps: 2, slippageBps: 1, feeBps: 10, financeBpsPerDay: 0 },
+  fx: { spreadBps: 1, slippageBps: 0.5, feeBps: 0.35, financeBpsPerDay: 0.6 },
+  metal: { spreadBps: 2, slippageBps: 1, feeBps: 0.35, financeBpsPerDay: 1 },
+  index: { spreadBps: 1.5, slippageBps: 1, feeBps: 0, financeBpsPerDay: 0.6 },
+  other: { spreadBps: 2, slippageBps: 1, feeBps: 4, financeBpsPerDay: 0.5 },
 };
+
+/** FX crosses (no USD leg) quote wider than the majors. */
+const CROSS_SPREAD_BPS = 2;
 
 const CRYPTO = /BTC|ETH|SOL|XRP|DOGE|ADA|LTC|LINK|DOT|AVAX|BNB|USDT|USDC|MATIC|TRX/i;
 const METAL = /XAU|XAG|XPT|XPD|PAXG|GOLD|SILVER/i;
@@ -33,7 +39,11 @@ export function costClass({ assetClass, symbol, venue } = {}) {
 }
 
 export function costsFor(instrument, table = DEFAULT_COSTS) {
-  return { ...(table[costClass(instrument)] ?? table.other) };
+  const cls = costClass(instrument);
+  const c = { financeBpsPerDay: 0, ...(table[cls] ?? table.other) };
+  const sym = String(instrument?.symbol ?? '').toUpperCase();
+  if (cls === 'fx' && sym && !sym.includes('USD')) c.spreadBps = Math.max(c.spreadBps, CROSS_SPREAD_BPS);
+  return c;
 }
 
 /** Round-trip cost as a fraction of price: spread once, slippage and fee on both legs. */

@@ -153,7 +153,7 @@ export function Backtest() {
               <Segmented label="Strategy" className="block" value={strategy} onChange={setStrategy} options={[{ value: 'breakout', label: 'Breakout' }, { value: 'trend', label: 'Trend' }, { value: 'classic', label: 'Classic' }]} />
               <span className="field-hint">
                 {strategy === 'breakout'
-                  ? 'Donchian 55/20 trend following, crypto only, for 4h and daily bars. Tested profitable on unseen crypto data, with deep drawdowns.'
+                  ? 'Donchian 55/20 trend following for 4h and daily bars, on crypto (and metals if the owner enables them). Profitable on unseen crypto data, with deep drawdowns; it does not trade FX.'
                   : strategy === 'trend'
                     ? 'With the 200-EMA trend only, stops of 2× ATR or more, skips setups that costs would eat. About break-even on unseen data.'
                     : 'All five playbooks, no trend or cost filter: the original rule set. Lost on unseen data.'}

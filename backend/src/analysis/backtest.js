@@ -60,7 +60,10 @@ export class Backtester {
       const gross = open.side === 'long' ? (px - open.entry) * open.qty : (open.entry - px) * open.qty;
       const raw = open.side === 'long' ? (exitMid - open.mid) * open.qty : (open.mid - exitMid) * open.qty;
       const exitFee = feeOf(px, open.qty);
-      const pnl = gross - exitFee - open.entryFee;
+      // Overnight financing (swap/funding) for every calendar day held.
+      const days = Math.max(0, (bar.ts - open.ts) / 86_400_000);
+      const finance = ((costs.financeBpsPerDay ?? 0) / 10000) * open.mid * open.qty * days;
+      const pnl = gross - exitFee - open.entryFee - finance;
       balance += pnl;
       trades.push({
         side: open.side,
@@ -70,7 +73,7 @@ export class Backtester {
         exit: round(px, 6),
         qty: round(open.qty, 8),
         pnl: round(pnl, 4),
-        fees: round(exitFee + open.entryFee, 4),
+        fees: round(exitFee + open.entryFee + finance, 4),
         rMultiple: round(pnl / open.riskAmount, 3),
         grossR: round(raw / open.riskAmount, 3),
         reason,
@@ -190,7 +193,8 @@ export class Backtester {
         'A stop touched on the entry bar counts; when a bar touches both stop and target, the stop fills first.',
         'Stops move to break-even near 1R and then trail by ATR, as the live engine does.',
         `Costs for this ${costClass({ assetClass, symbol, venue })} instrument: spread ${costs.spreadBps} bps, slippage ${costs.slippageBps} bps and fee ${costs.feeBps} bps per side.`,
-        'No funding, swap or borrow costs; results are not a forecast.',
+        costs.financeBpsPerDay ? `Overnight financing of ${costs.financeBpsPerDay} bps of notional a day is charged in both directions (about ${(costs.financeBpsPerDay * 3.65).toFixed(1)}% a year).` : 'No overnight financing for this instrument (spot).',
+        'Results are not a forecast.',
       ],
     };
   }

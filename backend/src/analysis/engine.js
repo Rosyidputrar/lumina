@@ -549,6 +549,21 @@ export function currentStrategy() {
   return activeStrategy;
 }
 
+/**
+ * Which asset classes the breakout profile may trade. Crypto by default.
+ * Metals are opt-in: on gold and silver daily data (2000-2026) the same rules
+ * were flat on the development period and modestly positive on the holdout
+ * (+0.31R gold, +0.24R silver), which is weaker evidence than for crypto.
+ * FX stays out: no tested design made money on 16 pairs once costs and swaps
+ * were counted (see src/tools/fx-research.js).
+ */
+export function setBreakoutClasses(classes) {
+  const allowed = ['crypto', 'metal', 'fx', 'index'];
+  const list = [...new Set((classes ?? []).map((c) => String(c).trim().toLowerCase()).filter((c) => allowed.includes(c)))];
+  STRATEGIES.breakout.assetClasses = list.length ? list : ['crypto'];
+  return STRATEGIES.breakout.assetClasses;
+}
+
 /** Apply a profile's rules to one candidate. Returns the (possibly adjusted) candidate or a reason. */
 function applyStrategy(c, profile, snap, costs) {
   if (profile.trendFilter) {

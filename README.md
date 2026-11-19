@@ -82,8 +82,14 @@ Yang perlu diketahui tentang `breakout`:
 
 - Profitnya datang dari sedikit tren besar; win rate sekitar 40%. Tanpa tiga trade terbesarnya, BTC di periode development justru negatif.
 - Drawdown bisa dalam: terburuk **62%** (DOGE harian) karena profit terbuka yang besar dikembalikan sebelum exit channel terpicu. 4h lebih tenang (terburuk ~23%).
-- Di FX dan emas strategi ini rugi pada sampel ini, jadi profil ini sengaja tidak trading non-crypto (alasannya tampil di scanner). Untuk FX, pilih profil lain atau biarkan tidak trading.
+- Profil ini tidak trading FX (alasannya tampil di scanner). Logam (emas, perak) bisa diaktifkan dengan `LUMINA_BREAKOUT_CLASSES=crypto,metal`: aturan yang sama impas di periode development emas 2000–2014 dan positif di holdout (emas +0,22R, perak +0,20R), bukti yang lebih lemah daripada crypto.
 - Hasil masa lalu bukan jaminan. Uji di paper/demo dulu.
+
+### FX
+
+Belum ada strategi FX yang terbukti profit, jadi Lumina sengaja tidak trading FX otomatis. Tiga desain diuji pada 16 pair harian 2003–2026 dengan biaya, spread pair silang dan swap: Donchian 55/20, Donchian lambat 100/50, dan mean reversion Bollinger. Hasil holdout: −0,38R, −0,56R dan −0,08R per trade; hanya 1–2 dari 16 pair yang profit. Donchian lambat sempat positif di periode development lalu gagal di holdout, contoh nyata kenapa backtest yang disetel di satu periode tidak bisa dipercaya. Ulangi dengan `npm --prefix backend run fx-research -- --refresh`.
+
+Backtest kini juga menghitung swap overnight secara konservatif (FX ~2,2%/tahun, logam ~3,6%/tahun dari nilai posisi, di kedua arah) dan spread lebih lebar untuk pair silang.
 
 Ulangi pengujian dengan data terbaru: `npm --prefix backend run walkforward -- --refresh` (tambahkan `--strategy=breakout` untuk satu profil). Halaman Backtest juga bisa membandingkan ketiga profil per pasar.
 

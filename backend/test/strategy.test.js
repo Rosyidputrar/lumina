@@ -153,3 +153,35 @@ test('paper fills use the instrument cost class', async () => {
   assert.ok(fx.fees < crypto.fees / 10);
   assert.deepEqual(costsFor({ symbol: 'EURUSD.s', venue: 'mt5' }), DEFAULT_COSTS.fx);
 });
+
+test('FX pays a swap for every day held, crosses pay a wider spread', async () => {
+  const { costsFor } = await import('../src/analysis/costs.js');
+  assert.equal(costsFor({ symbol: 'EURUSD', venue: 'mt5' }).spreadBps, 1);
+  assert.equal(costsFor({ symbol: 'EURJPY', venue: 'mt5' }).spreadBps, 2, 'a cross quotes wider');
+  assert.ok(costsFor({ symbol: 'EURUSD', venue: 'mt5' }).financeBpsPerDay > 0);
+  assert.equal(costsFor({ symbol: 'BTC-USDT', venue: 'okx' }).financeBpsPerDay, 0, 'spot crypto has no swap');
+  // The same trades cost more when financing is charged.
+  const day = 86_400_000;
+  const bars = makeCandles(500, { seed: 6, drift: 0.0006, stepMs: day, endTs: Date.now() - 3 * day });
+  const withSwap = new Backtester({ config: { account: { maxRiskPerTrade: 0.005, minConfidence: 0, minRewardRisk: 0 } } }).run(bars, { symbol: 'EURUSD', venue: 'mt5', assetClass: 'fx', timeframe: '1d', strategy: 'classic', trace: true });
+  const table = { ...DEFAULT_COSTS, fx: { ...DEFAULT_COSTS.fx, financeBpsPerDay: 0 } };
+  const noSwap = new Backtester({ config: { account: { maxRiskPerTrade: 0.005, minConfidence: 0, minRewardRisk: 0 } }, costs: table }).run(bars, { symbol: 'EURUSD', venue: 'mt5', assetClass: 'fx', timeframe: '1d', strategy: 'classic', trace: true });
+  assert.ok(withSwap.trades > 0);
+  assert.ok(withSwap.feesPaid > noSwap.feesPaid);
+  assert.ok(withSwap.assumptions.some((a) => /financing/.test(a)));
+});
+
+test('breakout trades metals only when the owner opts in', async () => {
+  const { setBreakoutClasses } = await import('../src/analysis/engine.js');
+  try {
+    assert.deepEqual(setBreakoutClasses(['crypto']), ['crypto']);
+    const gold = () => buildPlan(breakoutSeries(), { symbol: 'XAUUSD', venue: 'mt5', assetClass: 'metal', timeframe: '1d', strategy: 'breakout' });
+    assert.equal(gold().reason, 'filtered_by_strategy');
+    assert.deepEqual(setBreakoutClasses(['crypto', ' metal ', 'nonsense']), ['crypto', 'metal']);
+    assert.equal(gold().ok, true);
+    assert.equal(buildPlan(breakoutSeries(), { symbol: 'EURUSD', venue: 'mt5', assetClass: 'fx', timeframe: '1d', strategy: 'breakout' }).reason, 'filtered_by_strategy', 'FX stays out');
+    assert.deepEqual(setBreakoutClasses([]), ['crypto'], 'an empty list falls back to crypto');
+  } finally {
+    setBreakoutClasses(['crypto']);
+  }
+});

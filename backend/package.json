@@ -12,7 +12,8 @@
     "seed": "node --disable-warning=ExperimentalWarning src/tools/seed.js",
     "backtest": "node --disable-warning=ExperimentalWarning src/tools/backtest-cli.js",
     "migrate:neon": "node src/tools/migrate-neon.js",
-    "walkforward": "node --disable-warning=ExperimentalWarning src/tools/walkforward.js"
+    "walkforward": "node --disable-warning=ExperimentalWarning src/tools/walkforward.js",
+    "fx-research": "node --disable-warning=ExperimentalWarning src/tools/fx-research.js"
   },
   "engines": {
     "node": ">=22"
