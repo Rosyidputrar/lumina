@@ -561,7 +561,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     // never inherit its balance, currency, margin or login. Customer broker
     // profiles stay pending until a dedicated gateway is assigned.
     const customerProfile = user.owner ? null : brokerProfilePublic(user.id);
-    const ownerBrokerMoney = user.owner ? await accountCurrency() : { currency: null, source: 'none', balance: null, equity: null, leverage: null, margin: null, freeMargin: null, marginLevel: null, profit: null };
+    const ownerBrokerMoney = user.owner ? await accountCurrency() : { currency: config.account?.currency ?? 'USD', source: 'paper', balance: null, equity: null, leverage: null, margin: null, freeMargin: null, marginLevel: null, profit: null };
     const money = ownerBrokerMoney;
     const positions = store.openPositions(user.id);
     const quotes = (engine.lastQuotes ?? []).length ? engine.lastQuotes : await refreshQuotesSafe();

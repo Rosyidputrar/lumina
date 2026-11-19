@@ -4,7 +4,7 @@ Backend Node.js untuk terminal trading peribadi: data pasaran, analisis
 teknikal, pengurusan risiko, dan penghantaran order ke broker MT5 melalui
 gateway HTTP. Dikongsi untuk kegunaan peribadi sahaja.
 
-Frontend tidak disertakan dalam pakej ini. Pakej ini adalah API dan enjin.
+Frontend React ada dalam `../frontend` dan dibina ke `public/`, jadi satu proses Node melayan aplikasi dan API. Lihat README di akar repositori.
 
 ## Apa yang ada
 
@@ -16,7 +16,8 @@ Frontend tidak disertakan dalam pakej ini. Pakej ini adalah API dan enjin.
 - `src/owner/` — konsol pemilik (akaun MT5, kunci, dasar risiko).
 - `src/vault/` — nota dan pelajaran dagangan (tanpa identiti pengguna).
 - `src/store.js` — penyimpanan SQLite (`node:sqlite`).
-- `src/tools/` — skrip seed, backtest, dan migrasi.
+- `src/tools/` — skrip seed (cetak kunci lesen), backtest, dan migrasi.
+- `test/` — ujian `node:test`: lesen, analisis, risiko, vault, dan integrasi HTTP.
 
 ## Keperluan
 
@@ -28,7 +29,8 @@ Frontend tidak disertakan dalam pakej ini. Pakej ini adalah API dan enjin.
 ```sh
 npm install
 cp .env.example .env     # isi nilai sendiri; jangan commit .env
-npm start                # http://127.0.0.1:8787
+npm run seed             # cetak kunci lesen percubaan untuk mengaktifkan peranti
+npm start                # http://127.0.0.1:8787 (baca .env melalui shell anda)
 npm test
 ```
 
@@ -80,7 +82,7 @@ Ujian tidak menghubungi broker sebenar.
 - Penyimpanan utama masih SQLite. Migrasi ke PostgreSQL (Neon) disediakan
   sebagai skrip, tetapi adapter tak segerak belum disambungkan sepenuhnya.
 - Gateway MT5 perlu dijalankan dan dilindungi oleh anda sendiri.
-- Trailing stop dan partial take-profit belum dilaksanakan.
+- Partial take-profit belum dilaksanakan.
 - Ini bukan nasihat kewangan. Dagangan leveraj boleh menyebabkan kerugian
   melebihi jangkaan. Guna akaun demo dahulu.
 
