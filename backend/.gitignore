@@ -1,0 +1,11 @@
+data/
+dev.log
+edge/.secrets
+edge/metadata.json
+*.sqlite
+*.db-shm
+*.db-wal
+.screenshots/
+.attachments/
+.bench/
+node_modules/
