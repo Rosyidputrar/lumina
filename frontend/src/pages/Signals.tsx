@@ -19,6 +19,8 @@ const PATTERNS = [
   { value: 'momentum_continuation', label: 'Momentum' },
 ];
 
+const STRATEGY_LABEL: Record<string, string> = { breakout: 'breakout', trend: 'trend-aligned', classic: 'classic' };
+
 const REASONS: Record<string, string> = {
   no_setup: 'No playbook fired',
   insufficient_history: 'Not enough history',
@@ -91,7 +93,7 @@ export function Signals() {
       </section>
 
       <div className="grid grid-main">
-        <Card title="Setups" meta={sweep.data ? `${sweep.data.setups.length} of ${sweep.data.analysed} markets qualify · ${sweep.data.strategy === 'classic' ? 'classic' : 'trend-aligned'} strategy · scanned ${ago(sweep.data.at)}` : undefined} bodyClass="flush">
+        <Card title="Setups" meta={sweep.data ? `${sweep.data.setups.length} of ${sweep.data.analysed} markets qualify · ${STRATEGY_LABEL[sweep.data.strategy ?? ''] ?? sweep.data.strategy} strategy · scanned ${ago(sweep.data.at)}` : undefined} bodyClass="flush">
           {sweep.isLoading ? (
             <LoadingRows rows={6} label="Scanning markets" />
           ) : sweep.isError ? (
@@ -124,9 +126,9 @@ export function Signals() {
                           <span className="small">{words(r.playbook)}</span>
                         </div>
                       </td>
-                      <td className="r num">{fixed(r.confidence, 1)}%</td>
-                      <td className="r num">{fixed(r.rewardRisk)}</td>
-                      <td className="r num muted hide-sm">{price(r.stop)} / {price(r.target1)}</td>
+                      <td className="r num">{r.systematic ? 'Rule' : `${fixed(r.confidence, 1)}%`}</td>
+                      <td className="r num">{r.systematic ? '—' : fixed(r.rewardRisk)}</td>
+                      <td className="r num muted hide-sm">{price(r.stop)} / {r.systematic ? 'channel' : price(r.target1)}</td>
                       <td className="r">
                         <Link className="btn btn--sm" to={`/markets?symbol=${encodeURIComponent(r.symbol)}`}>Chart</Link>
                       </td>

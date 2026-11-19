@@ -70,23 +70,22 @@ Dengan `NODE_ENV=production` (default di image), server menolak start bila `LUMI
 
 ## Strategi trading
 
-Engine memakai profil **`trend`** secara default (bisa diganti owner di Owner console › Engine, atau `LUMINA_STRATEGY=classic`):
+Tiga profil strategi; owner memilihnya di Owner console › Engine (atau `LUMINA_STRATEGY`). Semua diuji walk-forward pada data nyata OKX dan Kraken: pasar dan periode *holdout* tidak pernah dipakai untuk memilih aturan, biaya dihitung per kelas aset, dan backtester memakai kode keluar-posisi yang sama dengan engine live.
 
-1. hanya searah tren EMA200 (harga dan EMA50 di sisi yang sama);
-2. tanpa playbook kontra-tren (range reversion, liquidity sweep) dan tanpa breakout retest;
-3. stop minimal 2× ATR (reward/risk dipertahankan, ukuran posisi mengecil);
-4. setup dilewati bila biaya pulang-pergi melebihi 10% dari risiko.
+| Profil | Aturan | Holdout (data yang tidak dilihat) |
+|---|---|---|
+| **`breakout`** (default) | Donchian 55/20 (parameter Turtle standar, ditetapkan sebelum diuji): masuk saat close menembus high/low 55 bar, stop 2×ATR(20), keluar saat close menembus channel 20 bar. Tanpa target tetap. Hanya crypto, timeframe 4h/1d. | Crypto: **+0,35R per trade** dari 1.638 trade, **19 dari 24 seri profit** (4h dan 1d, 2020–2026) |
+| `trend` | Searah EMA200, tanpa playbook kontra-tren, stop ≥ 2×ATR, lewati setup yang biayanya > 10% risiko | −0,008R (sekitar impas) |
+| `classic` | Lima playbook asli tanpa filter | −0,141R (rugi) |
 
-Biaya backtest dan paper trading kini per kelas aset (crypto: fee taker 10 bps/sisi; FX: spread ~1 bps + komisi 0,35 bps; logam; indeks), dan backtester meniru engine live: jendela 400 bar, fee di kedua sisi, stop di bar entri dihitung, break-even dan trailing stop.
+Yang perlu diketahui tentang `breakout`:
 
-Hasil walk-forward pada data nyata OKX dan Kraken (13 pasar, 1h/4h/1d; pasar dan periode holdout tidak dipakai untuk memilih aturan):
+- Profitnya datang dari sedikit tren besar; win rate sekitar 40%. Tanpa tiga trade terbesarnya, BTC di periode development justru negatif.
+- Drawdown bisa dalam: terburuk **62%** (DOGE harian) karena profit terbuka yang besar dikembalikan sebelum exit channel terpicu. 4h lebih tenang (terburuk ~23%).
+- Di FX dan emas strategi ini rugi pada sampel ini, jadi profil ini sengaja tidak trading non-crypto (alasannya tampil di scanner). Untuk FX, pilih profil lain atau biarkan tidak trading.
+- Hasil masa lalu bukan jaminan. Uji di paper/demo dulu.
 
-| Profil | Set | Trade | Ekspektansi/trade | Seri profit | Drawdown terburuk |
-|---|---|---|---|---|---|
-| classic | holdout | 4.074 | −0,141R | 4/31 | 38,8% |
-| trend | holdout | 718 | −0,008R | 13/31 | 8,3% |
-
-Profil `trend` menghentikan kerugian sistematis (sekitar impas) dan memangkas drawdown hampir 5×, **tetapi belum terbukti profit konsisten**: keunggulan sebelum biaya hanya ~+0,06R per trade. Ulangi pengujian dengan data terbaru: `npm --prefix backend run walkforward -- --refresh`.
+Ulangi pengujian dengan data terbaru: `npm --prefix backend run walkforward -- --refresh` (tambahkan `--strategy=breakout` untuk satu profil). Halaman Backtest juga bisa membandingkan ketiga profil per pasar.
 
 ## MT5 (MetaTrader 5) lewat mt5-gateway
 

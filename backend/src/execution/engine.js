@@ -13,7 +13,18 @@
  * symbol never stops the loop for the others, and every state change is
  * auditable. It never invents prices and never retries a rejected order.
  */
-import { buildPlan } from '../analysis/engine.js';
+import { buildPlan, channelExit, closedBars } from '../analysis/engine.js';
+import { timeframeMs } from '../market/data.js';
+
+/**
+ * A rule-based signal is valid for one entry: the bar after it closes. The
+ * engine runs every minute, so without this a breakout that was stopped out
+ * would be bought again on every cycle until the next bar.
+ */
+export function alreadyTradedSignal(plan, lastTradeAt, timeframe) {
+  if (!plan?.systematic || !plan.signalTs) return false;
+  return Number(lastTradeAt) >= Number(plan.signalTs) + timeframeMs(timeframe);
+}
 import { RiskEngine } from '../analysis/risk.js';
 import * as I from '../analysis/indicators.js';
 import { PaperBroker } from './paper-broker.js';
@@ -266,6 +277,7 @@ export class ExecutionEngine {
     for (const plan of candidates) {
       const quote = quotes.find((q) => q.symbol === plan.symbol && q.venue === plan.venue);
       if (!quote) continue;
+      if (alreadyTradedSignal(plan, this.store.lastTradeAt(user.id, plan.symbol), plan.timeframe)) continue;
       const decision = this.risk.evaluate(plan, {
         equity: acc.equity,
         openPositions: openNow,
@@ -350,7 +362,7 @@ export class ExecutionEngine {
           kind: 'signal',
           userId: user.id,
           symbol: plan.symbol,
-          summary: `${plan.name} ${plan.direction} ${plan.symbol} at ${quote.price} — ${plan.confidence}% confidence, ${plan.rewardRisk}R, ${plan.regime?.label ?? 'unknown regime'}`,
+          summary: plan.systematic ? `${plan.name} ${plan.direction} ${plan.symbol} at ${quote.price}, stop ${plan.stop}, exit on the ${plan.exit?.bars ?? 20}-bar channel` : `${plan.name} ${plan.direction} ${plan.symbol} at ${quote.price} — ${plan.confidence}% confidence, ${plan.rewardRisk}R, ${plan.regime?.label ?? 'unknown regime'}`,
           tags: [plan.playbook, plan.regime?.regime, plan.direction].filter(Boolean),
           detail: { playbook: plan.playbook, confidence: plan.confidence, entry: quote.price, stop: plan.stop, target: plan.target1, regime: plan.regime?.regime },
           importance: Math.min(1, plan.confidence / 100 + 0.2),
@@ -401,6 +413,19 @@ export class ExecutionEngine {
 
       if (pos.stop && (pos.side === 'long' ? price <= pos.stop : price >= pos.stop)) exit = 'stop_loss';
       else if (pos.target && (pos.side === 'long' ? price >= pos.target : price <= pos.target)) exit = 'take_profit';
+
+      // Trend-following positions leave on the channel, judged on closed bars
+      // exactly as the backtester judges them; no regime cut, no break-even.
+      const playbook = pos.signal_id ? this.store.get('SELECT playbook FROM signals WHERE id = ?', pos.signal_id)?.playbook : null;
+      if (!exit && playbook === 'donchian_breakout') {
+        try {
+          const candles = await this.market.candles({ venue: quote.venue, symbol: pos.symbol, timeframe, limit: 120 });
+          if (channelExit(pos.side, closedBars(candles, timeframe), 20)) exit = 'channel_exit';
+        } catch {
+          /* no data: hold, the broker stop still protects */
+        }
+        if (!exit) continue;
+      }
 
       // Regime invalidation: if the analysed regime flipped hard against us, cut.
       if (!exit) {

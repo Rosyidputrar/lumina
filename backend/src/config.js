@@ -142,14 +142,15 @@ export function loadConfig(overrides = {}) {
     loop: {
       enabled: String(env.LUMINA_AUTOTRADE ?? '1') === '1',
       intervalMs: num(env.LUMINA_LOOP_MS, 60_000),
-      timeframe: env.LUMINA_TIMEFRAME ?? '1h',
+      // 4h: the breakout profile was tested on 4h and daily bars, not 1h.
+      timeframe: env.LUMINA_TIMEFRAME ?? '4h',
       historyBars: num(env.LUMINA_HISTORY, 400),
     },
 
     watchlist: json(env.LUMINA_WATCHLIST, defaultWatchlist()),
 
-    // Strategy profile: 'trend' (default) or 'classic'. The owner can switch it.
-    strategy: env.LUMINA_STRATEGY === 'classic' ? 'classic' : 'trend',
+    // Strategy profile: 'breakout' (default), 'trend' or 'classic'. The owner can switch it.
+    strategy: ['breakout', 'trend', 'classic'].includes(env.LUMINA_STRATEGY) ? env.LUMINA_STRATEGY : 'breakout',
 
     // Costs by asset class, bps per side. LUMINA_COSTS overrides any class, e.g.
     // {"crypto":{"spreadBps":2,"slippageBps":1,"feeBps":8}}. The older paper

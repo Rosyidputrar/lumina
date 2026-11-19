@@ -235,6 +235,9 @@ export interface Plan {
   ok: boolean;
   reason?: string;
   strategy?: string;
+  systematic?: boolean;
+  exit?: { type: string; bars: number } | null;
+  signalTs?: number;
   filtered?: { playbook: string; direction: Side; why: string }[];
   symbol?: string;
   venue?: string;
@@ -280,6 +283,7 @@ export interface SweepRow {
   target1: number | null;
   regime: string | null;
   thesis: string | null;
+  systematic?: boolean;
   filtered?: string[];
 }
 
@@ -462,6 +466,9 @@ export interface StrategyProfile {
   trendFilter: boolean;
   minStopAtr: number;
   maxCostShare: number | null;
+  systematic?: boolean;
+  assetClasses?: string[];
+  exit?: { type: string; bars: number };
 }
 
 export interface IssuedLicence {

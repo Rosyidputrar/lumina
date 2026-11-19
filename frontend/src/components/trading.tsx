@@ -283,7 +283,7 @@ export function SignalRow({ signal, currency }: { signal: Signal; currency: stri
           <div className="row" style={{ gap: 'var(--s-2)' }}>
             <strong style={{ fontWeight: 500 }}>{signal.symbol}</strong>
             <SideBadge side={signal.direction} />
-            <Badge tone="action">{fixed(signal.confidence, 1)}% conf.</Badge>
+            {signal.playbook === 'donchian_breakout' ? <Badge tone="action">Rule signal</Badge> : <Badge tone="action">{fixed(signal.confidence, 1)}% conf.</Badge>}
             {signal.status !== 'new' ? <Badge>{words(signal.status)}</Badge> : null}
           </div>
           <span className="small muted">
@@ -311,8 +311,8 @@ export function SignalRow({ signal, currency }: { signal: Signal; currency: stri
           <span className="down">{price(signal.stop)}</span>
         </span>
         <span>
-          <span className="muted">Target </span>
-          <span className="up">{price(signal.target1)}</span>
+          <span className="muted">{signal.target1 === null ? 'Exit ' : 'Target '}</span>
+          <span className="up">{signal.target1 === null ? 'trailing channel' : price(signal.target1)}</span>
         </span>
       </div>
       {signal.rationale ? <p className="small" style={{ color: 'var(--ink-2)' }}>{signal.rationale}</p> : null}

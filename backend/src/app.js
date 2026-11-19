@@ -2071,7 +2071,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
           target1: plan.target1 ?? null,
           regime: plan.regime?.regime ?? null,
           thesis: plan.thesis ?? null,
-          filtered: (plan.filtered ?? []).map((f) => `${f.playbook.replace(/_/g, ' ')} ${f.direction}: ${f.why}`),
+          systematic: Boolean(plan.systematic),
+          filtered: (plan.filtered ?? []).map((f) => `${f.playbook.replace(/_/g, ' ')}: ${f.why}`),
         });
       } catch (e) {
         rows.push({ symbol: entry.symbol, venue: entry.venue, ok: false, reason: e.message });
@@ -2081,7 +2082,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const considered = rows.filter((r) => r.ok);
     const kept = considered.filter((r) => {
       if (pattern !== 'any' && r.playbook !== pattern) return false;
-      if (!profitOnly) return true;
+      // A rule-based signal has no fixed target to measure reward/risk against.
+      if (!profitOnly || r.systematic) return true;
       const rr = Number(r.rewardRisk ?? 0);
       return rr >= Math.max(minRR, 1);
     });
@@ -2793,7 +2795,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const requestedProfit = targetMatch ? Number(targetMatch[1].replace(/[,_]/g, '')) : null;
     const requestedQty = lotMatch ? Number(lotMatch[1]) : null;
     const requestedEntries = Math.min(10, Math.max(1, Number(entriesMatch?.[1] ?? 1)));
-    const stop = Number(plan.stop); const target = Number(plan.target1); const distance = Math.abs(target - quote.price);
+    const stop = Number(plan.stop); const target = plan.target1 === null || plan.target1 === undefined ? null : Number(plan.target1); const distance = target === null ? 0 : Math.abs(target - quote.price);
     const targetQty = requestedProfit && distance > 0 ? requestedProfit / distance : null;
     const state = await terminalState(user);
     const decision = engine.risk.evaluate({ ...plan, ok: true, manual: true, entry: quote.price, stop, target1: target }, { equity: state.account.equity, openPositions: store.openPositions(user.id), dayPnl: state.account.dayPnl, dayTrades: state.account.dayTrades, lastTradeAt: store.lastTradeAt(user.id, symbol), positionMap: { [symbol]: quote.price } });
@@ -2803,7 +2805,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const entries = Array.from({ length: requestedEntries }, (_, i) => ({ index: i + 1, qty: sliceQty, entry: quote.price, stop, target }));
     const lotWarning = requestedQty && requestedQty > sizedQty ? `Requested lot ${requestedQty} exceeds risk-sized volume ${sizedQty}; capped.` : null;
     const batchWarning = requestedEntries > 1 ? `Batch has ${requestedEntries} entries. Each order is sent separately and stops when one is rejected.` : null;
-    return { ok: true, symbol, venue: entry?.venue ?? 'mt5', timeframe: tf, side, mode: store.account(user.id)?.live_enabled && config.live && broker?.configured ? 'live' : 'paper', entry: quote.price, stop, target, qty, sliceQty, entries, requestedEntries, requestedQty, requestedProfit, estimatedProfit: distance * qty, targetQty, rewardRisk: plan.rewardRisk, confidence: plan.confidence, playbook: plan.playbook, thesis: plan.thesis, risk: decision.sizing, discovered: discovered ? { symbol: discovered, requiresAddToWatchlistBeforeOrder: true } : undefined, warning: [lotWarning, batchWarning, requestedProfit ? 'Profit target is an estimate, not a guarantee. Confirm volume, margin and stop before sending.' : 'Review the proposal before sending.'].filter(Boolean).join(' ') };
+    return { ok: true, symbol, venue: entry?.venue ?? 'mt5', timeframe: tf, side, mode: store.account(user.id)?.live_enabled && config.live && broker?.configured ? 'live' : 'paper', entry: quote.price, stop, target, qty, sliceQty, entries, requestedEntries, requestedQty, requestedProfit, estimatedProfit: target === null ? null : distance * qty, targetQty, rewardRisk: plan.rewardRisk, confidence: plan.confidence, playbook: plan.playbook, thesis: plan.thesis, risk: decision.sizing, discovered: discovered ? { symbol: discovered, requiresAddToWatchlistBeforeOrder: true } : undefined, warning: [lotWarning, batchWarning, requestedProfit ? 'Profit target is an estimate, not a guarantee. Confirm volume, margin and stop before sending.' : 'Review the proposal before sending.'].filter(Boolean).join(' ') };
   });
 
   /* ---------------------------------- AI -------------------------------- */

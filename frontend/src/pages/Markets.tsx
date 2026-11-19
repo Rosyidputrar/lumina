@@ -167,7 +167,7 @@ function PlanView({ plan }: { plan: Plan }) {
           {plan.reason === 'insufficient_history'
             ? 'The engine needs at least 60 closed bars before it scores anything.'
             : plan.reason === 'filtered_by_strategy'
-              ? `The ${plan.strategy === 'classic' ? 'classic' : 'trend-aligned'} strategy only takes setups that pass its rules. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}.`
+              ? `The ${plan.strategy === 'breakout' ? 'breakout' : plan.strategy === 'classic' ? 'classic' : 'trend-aligned'} strategy only takes setups that pass its rules. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}.`
               : `No playbook fired with acceptable geometry. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}${plan.regime?.adx ? ` (ADX ${fixed(plan.regime.adx, 1)})` : ''}. Standing aside is a position.`}
         </Notice>
         {plan.filtered?.length ? (
@@ -188,8 +188,8 @@ function PlanView({ plan }: { plan: Plan }) {
       <div className="row" style={{ gap: 'var(--s-2)' }}>
         <h3>{plan.name}</h3>
         <SideBadge side={plan.direction} />
-        <Badge tone="action">{fixed(plan.confidence, 1)}% confidence</Badge>
-        <Badge>{fixed(plan.rewardRisk)}R</Badge>
+        {plan.systematic ? <Badge tone="action">Rule signal</Badge> : <Badge tone="action">{fixed(plan.confidence, 1)}% confidence</Badge>}
+        {plan.systematic ? <Badge>Exit on the {plan.exit?.bars ?? 20}-bar channel</Badge> : <Badge>{fixed(plan.rewardRisk)}R</Badge>}
         <Badge>{plan.regime?.label}</Badge>
       </div>
       {plan.thesis ? <p className="measure" style={{ color: 'var(--ink-2)' }}>{plan.thesis}</p> : null}
@@ -203,18 +203,31 @@ function PlanView({ plan }: { plan: Plan }) {
           <div className="num down">{price(plan.stop)}</div>
         </div>
         <div className="card" style={{ padding: 'var(--s-3) var(--s-4)' }}>
-          <span className="label">Targets</span>
-          <div className="num up">
-            {price(plan.target1)} · {price(plan.target2)}
-          </div>
+          <span className="label">{plan.systematic ? 'Exit' : 'Targets'}</span>
+          {plan.systematic ? (
+            <div className="small">No fixed target: it follows the trend until a close crosses the {plan.exit?.bars ?? 20}-bar channel.</div>
+          ) : (
+            <div className="num up">
+              {price(plan.target1)} · {price(plan.target2)}
+            </div>
+          )}
         </div>
       </div>
       <div className="grid grid-2">
         <div>
           <h4 className="label" style={{ marginBottom: 'var(--s-1)' }}>
-            What scored it
+            {plan.systematic ? 'The rules' : 'What scored it'}
           </h4>
-          {(plan.factors ?? []).map((f) => (
+          {plan.systematic ? (
+            <ul className="stack-sm small" style={{ margin: 0, paddingLeft: '1.1em' }}>
+              {(plan.factors ?? []).map((f) => (
+                <li key={f.label}>
+                  <strong style={{ fontWeight: 500 }}>{f.label}:</strong> {f.note}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(plan.systematic ? [] : plan.factors ?? []).map((f) => (
             <div key={f.label} className="factor">
               <span className="factor-name">{f.label}</span>
               <span className="num small">
@@ -403,7 +416,7 @@ function Ticket({ terminal, symbol, quote, venue, tf }: { terminal: Terminal; sy
     if (!plan?.ok) return;
     setSide(plan.direction === 'long' ? 'buy' : 'sell');
     setStop(String(plan.stop));
-    setTarget(String(plan.target1));
+    setTarget(plan.target1 === null || plan.target1 === undefined ? '' : String(plan.target1));
     if (mode === 'pending') setTrigger(String(plan.entry));
     setErrors({});
   }
@@ -462,7 +475,7 @@ function Ticket({ terminal, symbol, quote, venue, tf }: { terminal: Terminal; sy
         />
         {plan?.ok ? (
           <button type="button" className="link small" style={{ justifySelf: 'start' }} onClick={applyPlan}>
-            Use the {words(plan.playbook)} plan levels ({plan.direction}, stop {price(plan.stop)})
+            Use the {words(plan.playbook)} plan levels ({plan.direction}, stop {price(plan.stop)}{plan.systematic ? ', no fixed target' : ''})
           </button>
         ) : null}
         {mode === 'pending' ? (

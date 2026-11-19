@@ -11,7 +11,7 @@
  *   - fees are charged on both sides
  *   - no compounding assumption beyond equity actually realised
  */
-import { buildPlan, currentStrategy } from './engine.js';
+import { buildPlan, channelExit, currentStrategy } from './engine.js';
 import { DEFAULT_COSTS, costClass, costsFor } from './costs.js';
 import * as I from './indicators.js';
 import { RiskEngine } from './risk.js';
@@ -88,12 +88,13 @@ export class Backtester {
       // Decided on the bars closed before this one, filled at this bar's open.
       if (!open) {
         const plan = buildPlan(candles.slice(Math.max(0, i - window), i), { symbol, venue, timeframe, assetClass, costs, strategy });
-        if (plan.ok && plan.confidence >= this.risk.policy.minConfidence && plan.rewardRisk >= this.risk.policy.minRewardRisk) {
+        if (plan.ok && (plan.systematic || (plan.confidence >= this.risk.policy.minConfidence && plan.rewardRisk >= this.risk.policy.minRewardRisk))) {
           const sizing = this.risk.size({ equity: balance, entry: plan.entry, stop: plan.stop, price: plan.entry });
           const side = plan.direction === 'long' ? 'buy' : 'sell';
           const entry = fillPx(side, bar.open);
           // A gap through the stop, or through the target, makes the plan stale.
-          const stale = plan.direction === 'long' ? entry <= plan.stop || entry >= plan.target1 : entry >= plan.stop || entry <= plan.target1;
+          const hasTarget = plan.target1 !== null && plan.target1 !== undefined;
+          const stale = plan.direction === 'long' ? entry <= plan.stop || (hasTarget && entry >= plan.target1) : entry >= plan.stop || (hasTarget && entry <= plan.target1);
           if (!(sizing.qty > 0) || stale) blocked++;
           else {
             open = {
@@ -110,21 +111,27 @@ export class Backtester {
               riskAmount: Math.abs(entry - plan.stop) * sizing.qty,
               playbook: plan.playbook,
               confidence: plan.confidence,
+              exit: plan.exit ?? null,
             };
           }
         }
       }
 
       /* --------------------------- manage open trade -------------------------- */
+      // A channel exit decided on the previous closed bar fills at this open.
+      if (open && open.exitNext && i > open.index) closeAt(i, bar.open, 'channel_exit');
       if (open) {
         const long = open.side === 'long';
         const hitStop = long ? bar.low <= open.stop : bar.high >= open.stop;
         // On the entry bar only the stop is trusted: the order of high and low is unknown.
-        const hitTarget = i > open.index && (long ? bar.high >= open.target : bar.low <= open.target);
+        const hitTarget = i > open.index && open.target !== null && open.target !== undefined && (long ? bar.high >= open.target : bar.low <= open.target);
         if (hitStop) closeAt(i, long ? Math.min(open.stop, bar.open) : Math.max(open.stop, bar.open), 'stop_loss');
         else if (hitTarget) closeAt(i, long ? Math.max(open.target, bar.open) : Math.min(open.target, bar.open), 'take_profit');
         else if (i === candles.length - 1) closeAt(i, bar.close, 'end_of_test');
-        else {
+        else if (open.exit?.type === 'channel') {
+          // Judged on this bar once it has closed; filled at the next open.
+          if (channelExit(open.side, candles.slice(Math.max(0, i - window), i + 1), open.exit.bars)) open.exitNext = true;
+        } else {
           // The live engine amends the stop on each cycle from the closed bar.
           const next = this.risk.manageStop({ side: open.side, entry: open.mid, stop: open.stop, initialStop: open.initialStop }, bar.close, atrSeries[i]);
           if (next) open.stop = next;

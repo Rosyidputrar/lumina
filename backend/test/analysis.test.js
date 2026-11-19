@@ -21,7 +21,7 @@ test('buildPlan refuses thin history instead of guessing', () => {
 
 test('buildPlan returns either a complete plan or an explained no-trade', () => {
   for (const seed of [3, 7, 11, 19, 23]) {
-    const plan = buildPlan(makeCandles(400, { seed, drift: seed % 2 ? 0.001 : -0.0008 }), { symbol: 'X', venue: 'fake', timeframe: '1h' });
+    const plan = buildPlan(makeCandles(400, { seed, drift: seed % 2 ? 0.001 : -0.0008 }), { symbol: 'X', venue: 'fake', timeframe: '1h', strategy: 'classic' });
     assert.ok(plan.regime?.regime, 'regime is always reported');
     if (plan.ok) {
       assert.ok(['long', 'short'].includes(plan.direction));
@@ -39,6 +39,7 @@ test('buildPlan returns either a complete plan or an explained no-trade', () => 
 test('closedBars drops the still-forming bar only', () => {
   const rows = makeCandles(10, { endTs: Date.now() - 10_000 });
   assert.equal(closedBars(rows, '1h').length, 9);
+  for (const tf of ['5m', '15m', '30m', '4h', '1d']) assert.equal(closedBars(makeCandles(10, { endTs: Date.now() - 10_000 }), tf).length, 9, tf);
   const old = makeCandles(10, { endTs: Date.now() - 2 * 3_600_000 });
   assert.equal(closedBars(old, '1h').length, 10);
 });

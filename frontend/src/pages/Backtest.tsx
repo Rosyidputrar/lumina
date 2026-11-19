@@ -15,10 +15,10 @@ export function Backtest() {
   const [theme] = useTheme();
   const watch = terminal.data?.watchlist ?? [];
   const [symbol, setSymbol] = useState('');
-  const [tf, setTf] = useState('1h');
+  const [tf, setTf] = useState('4h');
   const [bars, setBars] = useState('1000');
   const [equity, setEquity] = useState('');
-  const [strategy, setStrategy] = useState<'trend' | 'classic'>('trend');
+  const [strategy, setStrategy] = useState<'breakout' | 'trend' | 'classic'>('breakout');
   const [errors, setErrors] = useState<{ bars?: string; equity?: string }>({});
   const chosen = watch.find((w) => w.symbol === (symbol || watch[0]?.symbol));
   const run = useMutation({ mutationFn: (body: Record<string, unknown>) => api.post<BacktestResult>('/api/backtest', body) });
@@ -150,8 +150,14 @@ export function Backtest() {
             </div>
             <div className="field">
               <span className="field-label">Strategy</span>
-              <Segmented label="Strategy" className="block" value={strategy} onChange={setStrategy} options={[{ value: 'trend', label: 'Trend-aligned' }, { value: 'classic', label: 'Classic' }]} />
-              <span className="field-hint">{strategy === 'trend' ? 'With the 200-EMA trend only, stops of 2× ATR or more, skips setups that costs would eat.' : 'All five playbooks, no trend or cost filter: the original rule set.'}</span>
+              <Segmented label="Strategy" className="block" value={strategy} onChange={setStrategy} options={[{ value: 'breakout', label: 'Breakout' }, { value: 'trend', label: 'Trend' }, { value: 'classic', label: 'Classic' }]} />
+              <span className="field-hint">
+                {strategy === 'breakout'
+                  ? 'Donchian 55/20 trend following, crypto only, for 4h and daily bars. Tested profitable on unseen crypto data, with deep drawdowns.'
+                  : strategy === 'trend'
+                    ? 'With the 200-EMA trend only, stops of 2× ATR or more, skips setups that costs would eat. About break-even on unseen data.'
+                    : 'All five playbooks, no trend or cost filter: the original rule set. Lost on unseen data.'}
+              </span>
             </div>
             <Field label="Bars" htmlFor="bt-bars" error={errors.bars} hint="Up to 1,000. Some venues return fewer.">
               <input className="input num" inputMode="numeric" {...fieldProps('bt-bars', errors.bars, true)} value={bars} onChange={(e) => setBars(e.target.value)} />

@@ -19,13 +19,87 @@ test('cost classes come from the asset class first, then the symbol', () => {
   assert.equal(roundTripCost({ spreadBps: 2, slippageBps: 1, feeBps: 10 }), 0.0024);
 });
 
-test('the default strategy is trend-aligned and can be switched', () => {
-  assert.equal(currentStrategy(), 'trend');
+test('the default strategy is the breakout profile and can be switched', () => {
+  assert.equal(currentStrategy(), 'breakout');
   assert.deepEqual(STRATEGIES.trend.playbooks, ['trend_pullback', 'momentum_continuation']);
   setStrategy('classic');
   assert.equal(currentStrategy(), 'classic');
-  setStrategy('trend');
+  setStrategy('breakout');
   assert.throws(() => setStrategy('yolo'), /unknown strategy/);
+});
+
+/** A flat range, then a decisive close above it. */
+function breakoutSeries({ up = true, n = 120 } = {}) {
+  const day = 86_400_000;
+  const end = Date.now() - 2 * day;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const base = 100 + Math.sin(i / 3) * 2;
+    out.push({ ts: end - (n - 1 - i) * day, open: base, high: base + 1, low: base - 1, close: base + 0.2, volume: 1000 });
+  }
+  const last = out.at(-1);
+  last.close = up ? 110 : 90;
+  last.high = Math.max(last.high, last.close + 0.5);
+  last.low = Math.min(last.low, last.close - 0.5);
+  return out;
+}
+
+test('breakout: a close beyond the 55-bar channel is a rule signal with a 2 ATR stop and no target', () => {
+  const plan = buildPlan(breakoutSeries({ up: true }), { symbol: 'BTC-USDT', venue: 'okx', timeframe: '1d', strategy: 'breakout' });
+  assert.equal(plan.ok, true, plan.reason);
+  assert.equal(plan.playbook, 'donchian_breakout');
+  assert.equal(plan.direction, 'long');
+  assert.equal(plan.systematic, true);
+  assert.equal(plan.target1, null);
+  assert.ok(plan.stop < plan.entry);
+  assert.deepEqual(plan.exit, { type: 'channel', bars: 20 });
+  const short = buildPlan(breakoutSeries({ up: false }), { symbol: 'BTC-USDT', venue: 'okx', timeframe: '1d', strategy: 'breakout' });
+  assert.equal(short.direction, 'short');
+  // inside the range: nothing
+  const flat = breakoutSeries({ up: true }).slice(0, -1);
+  assert.equal(buildPlan(flat, { symbol: 'BTC-USDT', venue: 'okx', timeframe: '1d', strategy: 'breakout' }).ok, false);
+});
+
+test('breakout trades crypto only and says why it skips the rest', () => {
+  const plan = buildPlan(breakoutSeries(), { symbol: 'EURUSD', venue: 'kraken', timeframe: '1d', strategy: 'breakout' });
+  assert.equal(plan.ok, false);
+  assert.equal(plan.reason, 'filtered_by_strategy');
+  assert.match(plan.filtered[0].why, /crypto/);
+  assert.ok(plan.regime?.regime, 'the regime is still reported');
+});
+
+test('the risk gate takes rule signals without a confidence or reward/risk floor', async () => {
+  const { RiskEngine } = await import('../src/analysis/risk.js');
+  const risk = new RiskEngine({ minConfidence: 90, minRewardRisk: 3 });
+  const d = risk.evaluate({ ok: true, systematic: true, symbol: 'X', direction: 'long', entry: 100, stop: 90, confidence: 100, rewardRisk: null }, { equity: 10_000, openPositions: [] });
+  assert.equal(d.approved, true);
+  assert.equal(d.sizing.qty, 5);
+});
+
+test('a channel exit is judged on closed bars, and a rule signal is entered once', async () => {
+  const { channelExit } = await import('../src/analysis/engine.js');
+  const { alreadyTradedSignal } = await import('../src/execution/engine.js');
+  const bars = breakoutSeries({ up: true }).slice(0, -1);
+  bars.push({ ...bars.at(-1), ts: bars.at(-1).ts + 86_400_000, close: 50, low: 49.5 });
+  assert.equal(channelExit('long', bars, 20), true);
+  assert.equal(channelExit('short', bars, 20), false);
+  const plan = { systematic: true, signalTs: 1_000_000 };
+  assert.equal(alreadyTradedSignal(plan, 0, '1h'), false);
+  assert.equal(alreadyTradedSignal(plan, 1_000_000 + 3_600_000, '1h'), true, 'a trade after the signal bar closed used it up');
+  assert.equal(alreadyTradedSignal({ systematic: false, signalTs: 1 }, 9e15, '1h'), false);
+});
+
+test('the backtester exits breakout trades on the channel, never on a target', () => {
+  // Up for 400 days, then down for 300: the long must leave on the channel.
+  const day = 86_400_000;
+  const up = makeCandles(400, { seed: 4, drift: 0.003, stepMs: day, endTs: Date.now() - 303 * day });
+  const scale = up.at(-1).close / 100;
+  const down = makeCandles(300, { seed: 8, drift: -0.003, stepMs: day, endTs: Date.now() - 3 * day }).map((c) => ({ ...c, open: c.open * scale, high: c.high * scale, low: c.low * scale, close: c.close * scale }));
+  const r = new Backtester({ config: { account: { maxRiskPerTrade: 0.005 } } }).run([...up, ...down], { symbol: 'BTC-USDT', venue: 'okx', timeframe: '1d', strategy: 'breakout', warmup: 80, trace: true });
+  assert.equal(r.ok, true);
+  assert.ok(r.trades > 0);
+  assert.ok(r.tradeLog.every((t) => t.reason !== 'take_profit'));
+  assert.ok(r.tradeLog.some((t) => t.reason === 'channel_exit' || t.reason === 'stop_loss'));
 });
 
 test('the trend profile never trades against the 200-EMA trend', () => {

@@ -360,10 +360,10 @@ function EngineControl() {
       <div className="stack">
         <h3>Strategy</h3>
         <p className="small muted measure">
-          Which setups the engine may take. Trend-aligned is the default: on a walk-forward test over real OKX and Kraken history it cut the loss per trade on unseen data from −0.14R to about break-even and the worst drawdown from 39% to 8%. That is not a profit guarantee; compare both in Backtest.
+          Which setups the engine may take, for every account. On unseen data the breakout profile earned +0.35R a trade on crypto (19 of 24 markets profitable on 4h and daily bars) but had drawdowns up to 62%; the trend profile was about break-even; classic lost. Past results are not a promise: compare them in Backtest.
         </p>
         {strategy.data ? (
-          <div className="grid grid-2" style={{ gap: 'var(--s-3)' }}>
+          <div className="grid grid-3" style={{ gap: 'var(--s-3)' }}>
             {strategy.data.profiles.map((p) => {
               const on = strategy.data!.strategy === p.id;
               return (
@@ -371,6 +371,8 @@ function EngineControl() {
                   <strong style={{ fontWeight: 500 }}>{p.label}</strong>
                   <div className="small muted">
                     {p.playbooks ? p.playbooks.map((x) => words(x)).join(', ') : 'All five playbooks'}
+                    {p.assetClasses ? ` · ${p.assetClasses.join(', ')} only` : ''}
+                    {p.exit ? ` · exits on the ${p.exit.bars}-bar channel` : ''}
                     {p.trendFilter ? ' · with the 200-EMA trend' : ''}
                     {p.minStopAtr ? ` · stop ≥ ${p.minStopAtr}× ATR` : ''}
                     {p.maxCostShare ? ` · costs ≤ ${Math.round(p.maxCostShare * 100)}% of risk` : ''}

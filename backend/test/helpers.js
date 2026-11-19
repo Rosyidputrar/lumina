@@ -14,6 +14,7 @@ import { Analyst } from '../src/ai/analyst.js';
 import { ExpertAgent } from '../src/ai/expert-agent.js';
 import { Backtester } from '../src/analysis/backtest.js';
 import { createApp } from '../src/app.js';
+import { setStrategy } from '../src/analysis/engine.js';
 import { Vault } from '../src/vault/vault.js';
 import { Memory } from '../src/vault/memory.js';
 import { FileStore } from '../src/files/store.js';
@@ -55,7 +56,8 @@ export function fakeProvider(series = {}) {
   };
 }
 
-export async function startApp({ ownerSecret = OWNER, watchlist, broker = null, providers = null, live = false } = {}) {
+export async function startApp({ ownerSecret = OWNER, watchlist, broker = null, providers = null, live = false, strategy = 'breakout' } = {}) {
+  setStrategy(strategy);
   const filesRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-files-'));
   const cfg = loadConfig();
   cfg.dbFile = ':memory:';

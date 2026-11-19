@@ -65,7 +65,8 @@ export class RiskEngine {
     // not meaningful and must not be faked to pass. Every hard portfolio limit
     // below still applies — the trader is trusted with direction, not with
     // breaking the book.
-    if (!plan.manual) {
+    // A rule-based (systematic) signal has no confidence score or fixed target.
+    if (!plan.manual && !plan.systematic) {
       if (plan.confidence < p.minConfidence) reasons.push(`confidence ${plan.confidence} below ${p.minConfidence}`);
       if (plan.rewardRisk < p.minRewardRisk) reasons.push(`reward/risk ${plan.rewardRisk} below ${p.minRewardRisk}`);
     }
