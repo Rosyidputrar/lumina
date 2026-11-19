@@ -1,0 +1,21 @@
+# Coolify or plain Docker. Secrets come from the environment (a .env file next
+# to this one, or the platform's UI), never from this file.
+services:
+  lumina:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      LUMINA_DB: /data/sentinel.db
+      LUMINA_FILES_DIR: /data/files
+    volumes:
+      - lumina-data:/data
+    ports:
+      - "127.0.0.1:8787:8787"
+
+volumes:
+  lumina-data:

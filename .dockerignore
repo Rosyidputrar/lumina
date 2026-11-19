@@ -1,0 +1,12 @@
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+backend/public
+backend/data
+backend/test
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.log
+.git
