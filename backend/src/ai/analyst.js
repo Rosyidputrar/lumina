@@ -287,6 +287,7 @@ function humanReason(reason) {
   const map = {
     insufficient_history: 'there is not enough clean history to compute a stable reading',
     no_setup: 'no playbook fired with acceptable geometry',
+    filtered_by_strategy: 'a setup appeared, but the strategy rules filtered it (against the trend, or costs too large for the stop)',
     no_plan: 'no plan was produced',
     stale_data: 'the venue returned stale data',
   };

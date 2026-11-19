@@ -10,6 +10,7 @@
  * of market data, which is what makes it backtestable and unit-testable.
  */
 import * as I from './indicators.js';
+import { costsFor, roundTripCost } from './costs.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const round = (v, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? null : Number(v.toFixed(d)));
@@ -420,8 +421,88 @@ export function closedBars(candles, timeframe) {
   return Date.now() - ts < ms ? candles.slice(0, -1) : candles;
 }
 
-export function buildPlan(input, { symbol, venue, timeframe, label } = {}) {
+/* ------------------------------ strategies ----------------------------- */
+
+/**
+ * Strategy profiles: which playbooks may fire, and which rules a candidate
+ * must pass before it is scored.
+ *
+ * `trend` is the default since a walk-forward study on real OKX and Kraken
+ * history (13 markets, 1h/4h/1d, development and holdout sets kept apart).
+ * The original rule set had almost no edge before costs (+0.015R a trade) and
+ * lost -0.14R a trade on the holdout once costs were counted. Four rules, each
+ * chosen for a reason rather than for the number it produced, took the holdout
+ * to about break-even (-0.008R) and the worst drawdown from 39% to 8%:
+ *   1. trade only with the 200-EMA trend (price and EMA50 on the same side);
+ *   2. no counter-trend fades (range reversion, liquidity sweep) and no
+ *      breakout retest, whose edge was negative before costs;
+ *   3. a stop at least 2x ATR away, so ordinary noise does not stop it out;
+ *   4. skip a setup whose round-trip cost exceeds 10% of the risk.
+ * Break-even is not profit. Neither profile is a promise of returns.
+ *
+ * `classic` keeps the original behaviour for anyone who relies on it.
+ */
+export const STRATEGIES = {
+  trend: {
+    id: 'trend',
+    label: 'Trend-aligned',
+    playbooks: ['trend_pullback', 'momentum_continuation'],
+    trendFilter: true,
+    minStopAtr: 2,
+    maxCostShare: 0.1,
+  },
+  classic: {
+    id: 'classic',
+    label: 'Classic (all playbooks)',
+    playbooks: null,
+    trendFilter: false,
+    minStopAtr: 0,
+    maxCostShare: null,
+  },
+};
+
+let activeStrategy = 'trend';
+
+export function setStrategy(name) {
+  if (!STRATEGIES[name]) throw Object.assign(new Error(`unknown strategy: ${name}`), { code: 'BAD_STRATEGY' });
+  activeStrategy = name;
+  return STRATEGIES[name];
+}
+
+export function currentStrategy() {
+  return activeStrategy;
+}
+
+/** Apply a profile's rules to one candidate. Returns the (possibly adjusted) candidate or a reason. */
+function applyStrategy(c, profile, snap, costs) {
+  if (profile.trendFilter) {
+    const up = snap.ema200 !== null && snap.price > snap.ema200 && snap.ema50 > snap.ema200;
+    const down = snap.ema200 !== null && snap.price < snap.ema200 && snap.ema50 < snap.ema200;
+    if (c.direction === 'long' ? !up : !down) return { rejected: `${c.direction} against the 200-EMA trend` };
+  }
+  let out = c;
+  if (profile.minStopAtr > 0 && snap.atr > 0) {
+    const risk = Math.abs(c.entry - c.stop);
+    const min = snap.atr * profile.minStopAtr;
+    if (risk < min) {
+      // Widen the stop and keep the same reward/risk, so the size shrinks with it.
+      const rr = Math.abs(c.target1 - c.entry) / risk;
+      const sgn = c.direction === 'long' ? 1 : -1;
+      out = { ...c, stop: c.entry - sgn * min, target1: c.entry + sgn * min * rr, target2: c.entry + sgn * min * Math.max(rr, 3) };
+    }
+  }
+  if (profile.maxCostShare && costs) {
+    const cost = roundTripCost(costs) * out.entry;
+    const risk = Math.abs(out.entry - out.stop);
+    if (cost > profile.maxCostShare * risk) return { rejected: `costs would be ${Math.round((cost / risk) * 100)}% of the risk` };
+  }
+  return { candidate: out };
+}
+
+export function buildPlan(input, { symbol, venue, timeframe, label, assetClass = null, costs = null, strategy = undefined } = {}) {
   const candles = closedBars(input, timeframe);
+  const profile = STRATEGIES[strategy ?? activeStrategy] ?? STRATEGIES.trend;
+  const instrumentCosts = costs ?? costsFor({ assetClass, symbol, venue });
   if (!Array.isArray(candles) || candles.length < 60) {
     return { ok: false, reason: 'insufficient_history', candles: candles?.length ?? 0 };
   }
@@ -430,12 +511,17 @@ export function buildPlan(input, { symbol, venue, timeframe, label } = {}) {
   const ctx = { candles, snap, regime };
   const zones = I.levels(candles);
   const candidates = [];
+  const filtered = [];
   for (const name of regime.playbooks) {
     const fn = playbooks[name];
     if (!fn) continue;
+    if (profile.playbooks && !profile.playbooks.includes(name)) continue;
     try {
       const c = fn({ candles, snap, regime, zones });
-      if (c) candidates.push(c);
+      if (!c) continue;
+      const r = applyStrategy(c, profile, snap, instrumentCosts);
+      if (r.candidate) candidates.push(r.candidate);
+      else filtered.push({ playbook: c.playbook, direction: c.direction, why: r.rejected });
     } catch {
       /* a playbook that cannot evaluate simply does not fire */
     }
@@ -443,7 +529,9 @@ export function buildPlan(input, { symbol, venue, timeframe, label } = {}) {
   if (!candidates.length) {
     return {
       ok: false,
-      reason: 'no_setup',
+      reason: filtered.length ? 'filtered_by_strategy' : 'no_setup',
+      strategy: profile.id,
+      filtered,
       symbol,
       venue,
       timeframe,
@@ -467,6 +555,8 @@ export function buildPlan(input, { symbol, venue, timeframe, label } = {}) {
     venue,
     label: label ?? symbol,
     timeframe,
+    strategy: profile.id,
+    filtered,
     playbook: best.playbook,
     name: best.name,
     direction: best.direction,

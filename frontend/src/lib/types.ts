@@ -234,6 +234,8 @@ export interface Zone {
 export interface Plan {
   ok: boolean;
   reason?: string;
+  strategy?: string;
+  filtered?: { playbook: string; direction: Side; why: string }[];
   symbol?: string;
   venue?: string;
   label?: string;
@@ -278,10 +280,12 @@ export interface SweepRow {
   target1: number | null;
   regime: string | null;
   thesis: string | null;
+  filtered?: string[];
 }
 
 export interface SweepResponse {
   timeframe: string;
+  strategy?: string;
   pattern: string;
   profitOnly: boolean;
   minRR: number;
@@ -356,6 +360,10 @@ export interface BacktestResult {
   avgLoss: number;
   profitFactor: number | null;
   expectancyR: number;
+  grossR?: number;
+  feesPaid?: number;
+  strategy?: string;
+  costs?: { spreadBps: number; slippageBps: number; feeBps: number };
   maxDrawdownPct: number;
   avgBarsHeld: number;
   byPlaybook: { playbook: string; trades: number; winRate: number; pnl: number; avgR: number }[];
@@ -445,6 +453,15 @@ export interface OwnerLicence {
   lastSeen: number | null;
   expired: boolean;
   remaining: number | null;
+}
+
+export interface StrategyProfile {
+  id: string;
+  label: string;
+  playbooks: string[] | null;
+  trendFilter: boolean;
+  minStopAtr: number;
+  maxCostShare: number | null;
 }
 
 export interface IssuedLicence {

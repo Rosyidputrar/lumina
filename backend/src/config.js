@@ -5,6 +5,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_COSTS } from './analysis/costs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(__dirname, '..');
@@ -64,6 +65,12 @@ export function defaultWatchlist() {
 
 /** The signing secret used when none is configured. Never valid in production. */
 export const DEV_LICENSE_SECRET = 'dev-only-change-me-please-32chars-min';
+
+function mergeCosts(overrides, other) {
+  const out = {};
+  for (const [k, v] of Object.entries(DEFAULT_COSTS)) out[k] = { ...v, ...(k === 'other' ? other : {}), ...(overrides?.[k] ?? {}) };
+  return out;
+}
 
 export function loadConfig(overrides = {}) {
   const liveRequested = String(env.LUMINA_LIVE ?? '0') === '1';
@@ -140,6 +147,18 @@ export function loadConfig(overrides = {}) {
     },
 
     watchlist: json(env.LUMINA_WATCHLIST, defaultWatchlist()),
+
+    // Strategy profile: 'trend' (default) or 'classic'. The owner can switch it.
+    strategy: env.LUMINA_STRATEGY === 'classic' ? 'classic' : 'trend',
+
+    // Costs by asset class, bps per side. LUMINA_COSTS overrides any class, e.g.
+    // {"crypto":{"spreadBps":2,"slippageBps":1,"feeBps":8}}. The older paper
+    // variables (LUMINA_SPREAD_BPS, ...) set the class used for unknown instruments.
+    costs: mergeCosts(json(env.LUMINA_COSTS, {}), {
+      spreadBps: num(env.LUMINA_SPREAD_BPS, DEFAULT_COSTS.other.spreadBps),
+      slippageBps: num(env.LUMINA_SLIPPAGE_BPS, DEFAULT_COSTS.other.slippageBps),
+      feeBps: num(env.LUMINA_FEE_BPS, DEFAULT_COSTS.other.feeBps),
+    }),
 
     // AI analyst (optional). Without a key the analyst runs a deterministic
     // local model — clearly labelled, never pretending to be an LLM.

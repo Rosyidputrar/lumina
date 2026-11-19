@@ -73,6 +73,9 @@ export async function bootstrap(overrides = {}) {
         cfg.account.dailyTradeCap = preset.cap;
       }
     }
+    const { setStrategy } = await import('./analysis/engine.js');
+    const savedStrategy = store.getSetting('__owner__', 'strategy', null);
+    setStrategy(savedStrategy === 'classic' || savedStrategy === 'trend' ? savedStrategy : cfg.strategy);
     const savedRisk = store.getSetting('__owner__', 'risk', null);
     if (savedRisk) {
       const limits = JSON.parse(savedRisk);

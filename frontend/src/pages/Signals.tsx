@@ -22,6 +22,7 @@ const PATTERNS = [
 const REASONS: Record<string, string> = {
   no_setup: 'No playbook fired',
   insufficient_history: 'Not enough history',
+  filtered_by_strategy: 'Filtered by the strategy',
 };
 
 export function Signals() {
@@ -90,7 +91,7 @@ export function Signals() {
       </section>
 
       <div className="grid grid-main">
-        <Card title="Setups" meta={sweep.data ? `${sweep.data.setups.length} of ${sweep.data.analysed} markets qualify · scanned ${ago(sweep.data.at)}` : undefined} bodyClass="flush">
+        <Card title="Setups" meta={sweep.data ? `${sweep.data.setups.length} of ${sweep.data.analysed} markets qualify · ${sweep.data.strategy === 'classic' ? 'classic' : 'trend-aligned'} strategy · scanned ${ago(sweep.data.at)}` : undefined} bodyClass="flush">
           {sweep.isLoading ? (
             <LoadingRows rows={6} label="Scanning markets" />
           ) : sweep.isError ? (
@@ -141,6 +142,7 @@ export function Signals() {
                       </td>
                       <td colSpan={4} className="small">
                         {r.ok ? `${words(r.playbook)} ${r.direction} at ${fixed(r.rewardRisk)}R: below the filter` : (REASONS[r.reason ?? ''] ?? r.reason ?? 'Rejected')}
+                        {!r.ok && r.filtered?.length ? <span className="muted">: {r.filtered[0]}</span> : null}
                       </td>
                       <td className="r">
                         <Link className="btn btn--ghost btn--sm" to={`/markets?symbol=${encodeURIComponent(r.symbol)}`}>Chart</Link>

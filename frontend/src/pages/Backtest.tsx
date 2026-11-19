@@ -18,6 +18,7 @@ export function Backtest() {
   const [tf, setTf] = useState('1h');
   const [bars, setBars] = useState('1000');
   const [equity, setEquity] = useState('');
+  const [strategy, setStrategy] = useState<'trend' | 'classic'>('trend');
   const [errors, setErrors] = useState<{ bars?: string; equity?: string }>({});
   const chosen = watch.find((w) => w.symbol === (symbol || watch[0]?.symbol));
   const run = useMutation({ mutationFn: (body: Record<string, unknown>) => api.post<BacktestResult>('/api/backtest', body) });
@@ -32,7 +33,7 @@ export function Backtest() {
     if (equity && !(Number(equity) > 0)) next.equity = 'Write the starting equity as a positive amount, or leave it empty.';
     setErrors(next);
     if (next.bars || next.equity || !chosen) return;
-    run.mutate({ venue: chosen.venue, symbol: chosen.symbol, tf, bars: b, equity: equity ? Number(equity) : undefined });
+    run.mutate({ venue: chosen.venue, symbol: chosen.symbol, tf, bars: b, equity: equity ? Number(equity) : undefined, strategy });
   }
 
   return (
@@ -40,7 +41,7 @@ export function Backtest() {
       <div className="page-head">
         <div>
           <h2>Backtest</h2>
-          <p>Replays the live playbooks and risk gate over real venue candles. Each run costs five credits.</p>
+          <p>Replays the live playbooks, risk gate and stop management over real venue candles, with this market's trading costs. Each run costs five credits.</p>
         </div>
       </div>
       <div className="grid grid-main">
@@ -59,7 +60,7 @@ export function Backtest() {
                 <div className="stat-strip">
                   <Stat label="Return" value={<span className={tone(r.returnPct)}>{pct(r.returnPct, 2, { sign: true })}</span>} sub={`${money(r.startingEquity, null)} → ${money(r.endingEquity, ccy)}`} />
                   <Stat label="Trades" value={num(r.trades, 0)} sub={`${pct(r.winRate, 1)} won · ${r.blocked} blocked by risk`} />
-                  <Stat label="Profit factor" value={r.profitFactor === null ? '∞' : fixed(r.profitFactor)} sub={`Expectancy ${signed(r.expectancyR, 3)}R`} />
+                  <Stat label="Expectancy" value={<span className={tone(r.expectancyR)}>{signed(r.expectancyR, 3)}R</span>} sub={`Before costs ${signed(r.grossR ?? null, 3)}R · PF ${r.profitFactor === null ? '∞' : fixed(r.profitFactor)}`} />
                   <Stat label="Max drawdown" value={<span className="down">{pct(r.maxDrawdownPct)}</span>} sub={`Held ${fixed(r.avgBarsHeld, 1)} bars on average`} />
                 </div>
               </section>
@@ -146,6 +147,11 @@ export function Backtest() {
             <div className="field">
               <span className="field-label">Timeframe</span>
               <Segmented label="Timeframe" className="block" value={tf} onChange={setTf} options={['15m', '1h', '4h', '1d'].map((x) => ({ value: x, label: x }))} />
+            </div>
+            <div className="field">
+              <span className="field-label">Strategy</span>
+              <Segmented label="Strategy" className="block" value={strategy} onChange={setStrategy} options={[{ value: 'trend', label: 'Trend-aligned' }, { value: 'classic', label: 'Classic' }]} />
+              <span className="field-hint">{strategy === 'trend' ? 'With the 200-EMA trend only, stops of 2× ATR or more, skips setups that costs would eat.' : 'All five playbooks, no trend or cost filter: the original rule set.'}</span>
             </div>
             <Field label="Bars" htmlFor="bt-bars" error={errors.bars} hint="Up to 1,000. Some venues return fewer.">
               <input className="input num" inputMode="numeric" {...fieldProps('bt-bars', errors.bars, true)} value={bars} onChange={(e) => setBars(e.target.value)} />

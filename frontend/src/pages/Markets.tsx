@@ -163,11 +163,22 @@ function PlanView({ plan }: { plan: Plan }) {
   if (!plan.ok) {
     return (
       <div className="stack">
-        <Notice kind="info" title={plan.reason === 'insufficient_history' ? 'Not enough history yet' : 'No setup on this timeframe'}>
+        <Notice kind="info" title={plan.reason === 'insufficient_history' ? 'Not enough history yet' : plan.reason === 'filtered_by_strategy' ? 'A setup appeared, but the strategy filtered it' : 'No setup on this timeframe'}>
           {plan.reason === 'insufficient_history'
             ? 'The engine needs at least 60 closed bars before it scores anything.'
-            : `No playbook fired with acceptable geometry. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}${plan.regime?.adx ? ` (ADX ${fixed(plan.regime.adx, 1)})` : ''}. Standing aside is a position.`}
+            : plan.reason === 'filtered_by_strategy'
+              ? `The ${plan.strategy === 'classic' ? 'classic' : 'trend-aligned'} strategy only takes setups that pass its rules. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}.`
+              : `No playbook fired with acceptable geometry. The tape reads as ${plan.regime?.label.toLowerCase() ?? 'unclear'}${plan.regime?.adx ? ` (ADX ${fixed(plan.regime.adx, 1)})` : ''}. Standing aside is a position.`}
         </Notice>
+        {plan.filtered?.length ? (
+          <ul className="stack-sm small" style={{ margin: 0, paddingLeft: '1.1em', color: 'var(--ink-2)' }}>
+            {plan.filtered.map((f) => (
+              <li key={`${f.playbook}-${f.direction}`}>
+                {words(f.playbook)}, {f.direction}: {f.why}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     );
   }

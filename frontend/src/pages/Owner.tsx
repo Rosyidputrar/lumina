@@ -4,7 +4,7 @@ import { Check, Copy, ExternalLink, KeyRound, Plus, Trash2 } from 'lucide-react'
 import { api, API_BASE, errorText } from '../lib/api';
 import { keys } from '../lib/queries';
 import { ago, date, dateTime, num, words } from '../lib/format';
-import type { IssuedLicence, OwnerLicence } from '../lib/types';
+import type { IssuedLicence, OwnerLicence, StrategyProfile } from '../lib/types';
 import { Badge, Button, ConfirmDialog, Dialog, Empty, ErrorState, Field, LoadingRows, Notice, Segmented, Switch, Tabs, fieldProps } from '../components/ui';
 import { useToast } from '../components/Toast';
 
@@ -301,6 +301,17 @@ function EngineControl() {
   const toast = useToast();
   const engine = useQuery({ queryKey: keys.owner('engine'), queryFn: () => api.get<{ engine: { running: boolean; cycle: number; lastRun: number | null; timeframe: string; intervalMs: number }; autoTrade: boolean; signals: unknown[]; instruments: { symbol: string; venue: string; price: number | null }[] }>('/api/owner/engine'), refetchInterval: 15_000 });
   const style = useQuery({ queryKey: keys.owner('style'), queryFn: () => api.get<StyleResponse>('/api/owner/style') });
+  const strategy = useQuery({ queryKey: keys.owner('strategy'), queryFn: () => api.get<{ strategy: string; profiles: StrategyProfile[] }>('/api/owner/strategy') });
+  const setStrategyMut = useMutation({
+    mutationFn: (s: string) => api.post('/api/owner/strategy', { strategy: s }),
+    onSuccess: (_r, s) => {
+      toast.success(`Strategy set to ${s === 'trend' ? 'trend-aligned' : 'classic'}`, 'It applies from the next engine cycle, for every account.');
+      qc.invalidateQueries({ queryKey: ['owner'] });
+      qc.invalidateQueries({ queryKey: ['sweep'] });
+      qc.invalidateQueries({ queryKey: ['analysis'] });
+    },
+    onError: (e) => toast.error('The strategy was not changed', errorText(e)),
+  });
   const scope = useQuery({ queryKey: keys.owner('execution'), queryFn: () => api.get<{ mode: string; symbol: string | null; symbols: string[]; available: string[] }>('/api/owner/execution') });
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['owner'] });
@@ -345,6 +356,32 @@ function EngineControl() {
           </Button>
         </div>
         <Switch checked={e.autoTrade} onChange={(v) => control.mutate({ autoTrade: v })} label="Auto-trade on the owner account" />
+      </div>
+      <div className="stack">
+        <h3>Strategy</h3>
+        <p className="small muted measure">
+          Which setups the engine may take. Trend-aligned is the default: on a walk-forward test over real OKX and Kraken history it cut the loss per trade on unseen data from −0.14R to about break-even and the worst drawdown from 39% to 8%. That is not a profit guarantee; compare both in Backtest.
+        </p>
+        {strategy.data ? (
+          <div className="grid grid-2" style={{ gap: 'var(--s-3)' }}>
+            {strategy.data.profiles.map((p) => {
+              const on = strategy.data!.strategy === p.id;
+              return (
+                <button key={p.id} type="button" className="card" onClick={() => !on && setStrategyMut.mutate(p.id)} aria-pressed={on} style={{ textAlign: 'left', padding: 'var(--s-4)', cursor: 'pointer', borderColor: on ? 'var(--action)' : undefined, background: on ? 'var(--action-soft)' : undefined }}>
+                  <strong style={{ fontWeight: 500 }}>{p.label}</strong>
+                  <div className="small muted">
+                    {p.playbooks ? p.playbooks.map((x) => words(x)).join(', ') : 'All five playbooks'}
+                    {p.trendFilter ? ' · with the 200-EMA trend' : ''}
+                    {p.minStopAtr ? ` · stop ≥ ${p.minStopAtr}× ATR` : ''}
+                    {p.maxCostShare ? ` · costs ≤ ${Math.round(p.maxCostShare * 100)}% of risk` : ''}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <LoadingRows rows={2} />
+        )}
       </div>
       <div className="stack">
         <h3>Trading style</h3>

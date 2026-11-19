@@ -16,26 +16,35 @@ import { uid } from '../store.js';
 
 const round = (v, d = 8) => Number(v.toFixed(d));
 
+import { costsFor, DEFAULT_COSTS } from '../analysis/costs.js';
+
 export class PaperBroker {
   constructor({ store, config, clock = () => Date.now() }) {
     this.store = store;
     this.cfg = config.paper ?? {};
+    // Fills are priced with the instrument's own cost class.
+    this.costTable = config.costs ?? DEFAULT_COSTS;
     this.clock = clock;
     this.id = 'paper';
   }
 
   /** Simulate a taker fill against a quoted mid price. */
-  fillPrice(side, mid, qty, recentVolume) {
-    const spread = (mid * (this.cfg.spreadBps ?? 1.5)) / 10000 / 2;
+  costs(instrument) {
+    return costsFor(instrument ?? {}, this.costTable);
+  }
+
+  fillPrice(side, mid, qty, recentVolume, costs = this.costs()) {
+    const spread = (mid * costs.spreadBps) / 10000 / 2;
     const impactBps = qty > 0 && recentVolume > 0 ? (qty / recentVolume) * 100 : 0;
-    const slip = (mid * (this.cfg.slippageBps ?? 1) + mid * impactBps) / 10000;
+    const slip = (mid * costs.slippageBps + mid * impactBps) / 10000;
     return round(side === 'buy' || side === 'long' ? mid + spread + slip : mid - spread - slip, 8);
   }
 
   async place({ userId, mode = 'paper', venue, symbol, side, qty, type = 'market', limitPrice, mid, recentVolume, signalId, stop, target, reduceOnly = false }) {
     if (!(qty > 0)) throw new Error('paper: qty must be > 0');
-    const px = type === 'limit' && limitPrice ? limitPrice : this.fillPrice(side, mid, qty, recentVolume);
-    const fee = round((px * qty * (this.cfg.feeBps ?? 4)) / 10000, 8);
+    const costs = this.costs({ venue, symbol });
+    const px = type === 'limit' && limitPrice ? limitPrice : this.fillPrice(side, mid, qty, recentVolume, costs);
+    const fee = round((px * qty * costs.feeBps) / 10000, 8);
     const orderId = this.store.insertOrder({
       userId,
       signalId,
@@ -78,8 +87,9 @@ export class PaperBroker {
 
   close({ userId, position, price, reason = 'manual', recentVolume = 0 }) {
     const exitSide = position.side === 'long' ? 'sell' : 'buy';
-    const px = this.fillPrice(exitSide, price, position.qty, recentVolume);
-    const fee = round((px * position.qty * (this.cfg.feeBps ?? 4)) / 10000, 8);
+    const costs = this.costs({ venue: position.venue, symbol: position.symbol });
+    const px = this.fillPrice(exitSide, price, position.qty, recentVolume, costs);
+    const fee = round((px * position.qty * costs.feeBps) / 10000, 8);
     const gross = position.side === 'long' ? (px - position.entry) * position.qty : (position.entry - px) * position.qty;
     // Net of both legs: the entry fee was paid when the position opened and
     // belongs in the trade's result, the same way the backtester counts it.

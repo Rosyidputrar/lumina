@@ -30,7 +30,8 @@ test('buildPlan returns either a complete plan or an explained no-trade', () => 
       else assert.ok(plan.stop > plan.entry && plan.target1 < plan.entry);
       assert.ok(plan.factors.length > 0 && plan.invalidations.length > 0);
     } else {
-      assert.equal(plan.reason, 'no_setup');
+      assert.ok(['no_setup', 'filtered_by_strategy'].includes(plan.reason), plan.reason);
+      if (plan.reason === 'filtered_by_strategy') assert.ok(plan.filtered.every((f) => f.why));
     }
   }
 });
@@ -65,7 +66,7 @@ test('risk: the gate explains every rejection', () => {
 });
 
 test('backtest runs on closed bars and reports its assumptions', () => {
-  const r = new Backtester({ config: { account: { maxRiskPerTrade: 0.005, minConfidence: 0, minRewardRisk: 0 } } }).run(makeCandles(500), { symbol: 'X' });
+  const r = new Backtester({ config: { account: { maxRiskPerTrade: 0.005, minConfidence: 0, minRewardRisk: 0 } } }).run(makeCandles(500), { symbol: 'X', strategy: 'classic' });
   assert.equal(r.ok, true);
   assert.ok(r.bars > 0 && r.bars <= 500);
   assert.ok(Array.isArray(r.curve));

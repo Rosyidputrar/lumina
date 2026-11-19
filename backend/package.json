@@ -11,7 +11,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"test/**/*.test.js\"",
     "seed": "node --disable-warning=ExperimentalWarning src/tools/seed.js",
     "backtest": "node --disable-warning=ExperimentalWarning src/tools/backtest-cli.js",
-    "migrate:neon": "node src/tools/migrate-neon.js"
+    "migrate:neon": "node src/tools/migrate-neon.js",
+    "walkforward": "node --disable-warning=ExperimentalWarning src/tools/walkforward.js"
   },
   "engines": {
     "node": ">=22"

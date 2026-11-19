@@ -11,40 +11,41 @@
  *   - fees are charged on both sides
  *   - no compounding assumption beyond equity actually realised
  */
-import { buildPlan } from './engine.js';
+import { buildPlan, currentStrategy } from './engine.js';
+import { DEFAULT_COSTS, costClass, costsFor } from './costs.js';
+import * as I from './indicators.js';
 import { RiskEngine } from './risk.js';
 
 const round = (v, d = 4) => (Number.isFinite(v) ? Number(v.toFixed(d)) : null);
 
 export class Backtester {
-  constructor({ config, risk = null } = {}) {
+  constructor({ config, risk = null, costs = null } = {}) {
     this.config = config;
-    this.costs = {
-      spreadBps: config?.paper?.spreadBps ?? 1.5,
-      slippageBps: config?.paper?.slippageBps ?? 1,
-      feeBps: config?.paper?.feeBps ?? 4,
-    };
+    this.costTable = costs ?? config?.costs ?? DEFAULT_COSTS;
     this.risk = risk ?? new RiskEngine(config?.account ?? {});
   }
 
-  fill(side, mid, qty) {
-    const c = this.costs;
-    const dir = side === 'buy' ? 1 : -1;
-    return mid * (1 + dir * (c.spreadBps / 2 + c.slippageBps) / 10000);
-  }
-
-  fee(price, qty) {
-    return (price * qty * this.costs.feeBps) / 10000;
-  }
-
   /**
-   * @param candles full OHLCV array
-   * @param options { warmup, equity, timeframe, symbol, venue, trace }
+   * Replay the live decision path bar by bar.
+   *
+   * What it mirrors from the live engine, on purpose:
+   *   - the same 400-bar analysis window, closed bars only;
+   *   - the same risk gate and position sizing;
+   *   - the same stop management: break-even at ~0.9R, then an ATR trail;
+   *   - costs for the instrument's asset class on both legs.
+   * Conservative where the bar is ambiguous: a stop touched on the entry bar
+   * counts, and when one bar touches both stop and target the stop wins.
    */
-  run(candles, { warmup = 120, equity = 10000, timeframe = '1h', symbol = 'SIM', venue = 'backtest', trace = false } = {}) {
+  run(candles, { warmup = 120, equity = 10000, timeframe = '1h', symbol = 'SIM', venue = 'backtest', assetClass = null, strategy = undefined, trace = false } = {}) {
     if (!Array.isArray(candles) || candles.length < warmup + 30) {
       return { ok: false, reason: 'insufficient_history', bars: candles?.length ?? 0 };
     }
+    const costs = costsFor({ assetClass, symbol, venue }, this.costTable);
+    const fillPx = (side, mid) => mid * (1 + (side === 'buy' ? 1 : -1) * (costs.spreadBps / 2 + costs.slippageBps) / 10000);
+    const feeOf = (px, qty) => (px * qty * costs.feeBps) / 10000;
+    const atrSeries = I.atr(candles, 14);
+    const window = this.config?.loop?.historyBars ?? 400;
+
     let balance = equity;
     const trades = [];
     const curve = [];
@@ -53,87 +54,84 @@ export class Backtester {
     let maxDrawdown = 0;
     let blocked = 0;
 
+    const closeAt = (i, exitMid, reason) => {
+      const bar = candles[i];
+      const px = fillPx(open.side === 'long' ? 'sell' : 'buy', exitMid);
+      const gross = open.side === 'long' ? (px - open.entry) * open.qty : (open.entry - px) * open.qty;
+      const raw = open.side === 'long' ? (exitMid - open.mid) * open.qty : (open.mid - exitMid) * open.qty;
+      const exitFee = feeOf(px, open.qty);
+      const pnl = gross - exitFee - open.entryFee;
+      balance += pnl;
+      trades.push({
+        side: open.side,
+        entryTs: open.ts,
+        exitTs: bar.ts,
+        entry: round(open.entry, 6),
+        exit: round(px, 6),
+        qty: round(open.qty, 8),
+        pnl: round(pnl, 4),
+        fees: round(exitFee + open.entryFee, 4),
+        rMultiple: round(pnl / open.riskAmount, 3),
+        grossR: round(raw / open.riskAmount, 3),
+        reason,
+        bars: i - open.index,
+        playbook: open.playbook,
+        confidence: open.confidence,
+      });
+      open = null;
+    };
+
     for (let i = warmup; i < candles.length; i++) {
-      const window = candles.slice(0, i); // only closed bars are visible
       const bar = candles[i];
 
-      /* --------------------------- manage open trade -------------------------- */
-      if (open) {
-        let exitPrice = null;
-        let reason = null;
-        const hitStop = open.side === 'long' ? bar.low <= open.stop : bar.high >= open.stop;
-        const hitTarget = open.side === 'long' ? bar.high >= open.target : bar.low <= open.target;
-
-        if (hitStop) {
-          exitPrice = open.side === 'long' ? Math.min(open.stop, bar.open) : Math.max(open.stop, bar.open);
-          reason = 'stop_loss';
-        } else if (hitTarget) {
-          exitPrice = open.side === 'long' ? Math.max(open.target, bar.open) : Math.min(open.target, bar.open);
-          reason = 'take_profit';
-        } else if (i === candles.length - 1) {
-          exitPrice = bar.close;
-          reason = 'end_of_test';
-        }
-
-        if (exitPrice !== null) {
-          const px = this.fill(open.side === 'long' ? 'sell' : 'buy', exitPrice, open.qty);
-          const gross = open.side === 'long' ? (px - open.entry) * open.qty : (open.entry - px) * open.qty;
-          const fees = open.fees + this.fee(px, open.qty);
-          const pnl = gross - this.fee(px, open.qty);
-          balance += pnl;
-          trades.push({
-            side: open.side,
-            entryTs: open.ts,
-            exitTs: bar.ts,
-            entry: round(open.entry, 6),
-            exit: round(px, 6),
-            qty: round(open.qty, 8),
-            pnl: round(pnl, 4),
-            rMultiple: round(pnl / open.riskAmount, 3),
-            reason,
-            bars: i - open.index,
-            playbook: open.playbook,
-            confidence: open.confidence,
-          });
-          open = null;
-        }
-      }
-
       /* ------------------------------ new entry ------------------------------ */
+      // Decided on the bars closed before this one, filled at this bar's open.
       if (!open) {
-        const plan = buildPlan(window, { symbol, venue, timeframe });
+        const plan = buildPlan(candles.slice(Math.max(0, i - window), i), { symbol, venue, timeframe, assetClass, costs, strategy });
         if (plan.ok && plan.confidence >= this.risk.policy.minConfidence && plan.rewardRisk >= this.risk.policy.minRewardRisk) {
           const sizing = this.risk.size({ equity: balance, entry: plan.entry, stop: plan.stop, price: plan.entry });
-          if (sizing.qty > 0) {
-            const entry = this.fill(plan.direction === 'long' ? 'buy' : 'sell', bar.open, sizing.qty);
-            // guard: if the next open gapped past our stop the plan is stale
-            const stale = plan.direction === 'long' ? entry <= plan.stop : entry >= plan.stop;
-            if (stale) {
-              blocked++;
-            } else {
-              open = {
-                side: plan.direction,
-                entry,
-                qty: sizing.qty,
-                stop: plan.stop,
-                target: plan.target1,
-                ts: bar.ts,
-                index: i,
-                fees: this.fee(entry, sizing.qty),
-                riskAmount: Math.abs(entry - plan.stop) * sizing.qty,
-                playbook: plan.playbook,
-                confidence: plan.confidence,
-              };
-            }
-          } else {
-            blocked++;
+          const side = plan.direction === 'long' ? 'buy' : 'sell';
+          const entry = fillPx(side, bar.open);
+          // A gap through the stop, or through the target, makes the plan stale.
+          const stale = plan.direction === 'long' ? entry <= plan.stop || entry >= plan.target1 : entry >= plan.stop || entry <= plan.target1;
+          if (!(sizing.qty > 0) || stale) blocked++;
+          else {
+            open = {
+              side: plan.direction,
+              mid: bar.open,
+              entry,
+              qty: sizing.qty,
+              stop: plan.stop,
+              initialStop: plan.stop,
+              target: plan.target1,
+              ts: bar.ts,
+              index: i,
+              entryFee: feeOf(entry, sizing.qty),
+              riskAmount: Math.abs(entry - plan.stop) * sizing.qty,
+              playbook: plan.playbook,
+              confidence: plan.confidence,
+            };
           }
         }
       }
 
-      const mtm = open
-        ? balance + (open.side === 'long' ? (bar.close - open.entry) * open.qty : (open.entry - bar.close) * open.qty)
-        : balance;
+      /* --------------------------- manage open trade -------------------------- */
+      if (open) {
+        const long = open.side === 'long';
+        const hitStop = long ? bar.low <= open.stop : bar.high >= open.stop;
+        // On the entry bar only the stop is trusted: the order of high and low is unknown.
+        const hitTarget = i > open.index && (long ? bar.high >= open.target : bar.low <= open.target);
+        if (hitStop) closeAt(i, long ? Math.min(open.stop, bar.open) : Math.max(open.stop, bar.open), 'stop_loss');
+        else if (hitTarget) closeAt(i, long ? Math.max(open.target, bar.open) : Math.min(open.target, bar.open), 'take_profit');
+        else if (i === candles.length - 1) closeAt(i, bar.close, 'end_of_test');
+        else {
+          // The live engine amends the stop on each cycle from the closed bar.
+          const next = this.risk.manageStop({ side: open.side, entry: open.mid, stop: open.stop, initialStop: open.initialStop }, bar.close, atrSeries[i]);
+          if (next) open.stop = next;
+        }
+      }
+
+      const mtm = open ? balance + (open.side === 'long' ? (bar.close - open.entry) * open.qty : (open.entry - bar.close) * open.qty) - open.entryFee : balance;
       peak = Math.max(peak, mtm);
       maxDrawdown = Math.max(maxDrawdown, ((peak - mtm) / peak) * 100);
       if (i % 3 === 0 || i === candles.length - 1) curve.push({ ts: bar.ts, equity: round(mtm, 2) });
@@ -147,14 +145,16 @@ export class Backtester {
     const periodsPerYear = { '1h': 24 * 365, '4h': 6 * 365, '1d': 365, '15m': 96 * 365, '30m': 48 * 365, '5m': 288 * 365 }[timeframe] ?? 8760;
     const ret = (balance - equity) / equity;
     const years = bars / periodsPerYear;
-    const cagr = years > 0 ? (1 + ret) ** (1 / years) - 1 : 0;
+    const cagr = years > 0 && balance > 0 ? (1 + ret) ** (1 / years) - 1 : 0;
     const rMultiples = trades.map((t) => t.rMultiple);
+    const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-    const stats = {
+    return {
       ok: true,
       symbol,
       venue,
       timeframe,
+      strategy: strategy ?? currentStrategy(),
       bars,
       from: new Date(candles[0].ts).toISOString(),
       to: new Date(candles.at(-1).ts).toISOString(),
@@ -167,23 +167,25 @@ export class Backtester {
       winRate: trades.length ? round((wins.length / trades.length) * 100, 2) : 0,
       avgWin: wins.length ? round(grossWin / wins.length, 2) : 0,
       avgLoss: losses.length ? round(grossLoss / losses.length, 2) : 0,
-      profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : grossWin > 0 ? Infinity : 0,
-      expectancyR: rMultiples.length ? round(rMultiples.reduce((a, b) => a + b, 0) / rMultiples.length, 3) : 0,
-      averageR: rMultiples.length ? round(rMultiples.reduce((a, b) => a + b, 0) / rMultiples.length, 3) : 0,
+      profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : grossWin > 0 ? null : 0,
+      expectancyR: round(mean(rMultiples), 3),
+      averageR: round(mean(rMultiples), 3),
+      grossR: round(mean(trades.map((t) => t.grossR)), 3),
+      feesPaid: round(trades.reduce((a, t) => a + t.fees, 0), 2),
       maxDrawdownPct: round(maxDrawdown, 2),
       avgBarsHeld: trades.length ? round(trades.reduce((a, t) => a + t.bars, 0) / trades.length, 1) : 0,
       byPlaybook: summariseBy(trades),
       curve,
       tradeLog: trace ? trades : trades.slice(-40),
-      costs: this.costs,
+      costs,
       assumptions: [
-        'Signals are computed on closed bars only; entries fill at the next bar open.',
-        'When a bar touches both stop and target, the stop is assumed to fill first.',
-        'Costs: spread + slippage on entry, taker fee on both sides.',
-        'No leverage compounding beyond realised P&L; no funding or borrow costs.',
+        'Signals use the same 400 closed bars the live engine reads; entries fill at the next bar open.',
+        'A stop touched on the entry bar counts; when a bar touches both stop and target, the stop fills first.',
+        'Stops move to break-even near 1R and then trail by ATR, as the live engine does.',
+        `Costs for this ${costClass({ assetClass, symbol, venue })} instrument: spread ${costs.spreadBps} bps, slippage ${costs.slippageBps} bps and fee ${costs.feeBps} bps per side.`,
+        'No funding, swap or borrow costs; results are not a forecast.',
       ],
     };
-    return stats;
   }
 }
 

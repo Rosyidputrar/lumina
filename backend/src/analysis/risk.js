@@ -134,7 +134,9 @@ export class RiskEngine {
   manageStop(position, price, atr) {
     const { side, entry, stop } = position;
     if (!stop || !atr) return null;
-    const r = Math.abs(entry - stop);
+    // 1R is the distance to the ORIGINAL stop when it is known. Measured from a
+    // stop that has already moved, it shrinks to almost nothing after break-even.
+    const r = Math.abs(entry - (position.initialStop ?? stop));
     const moved = side === 'long' ? price - entry : entry - price;
     if (moved < r * 0.9) return null;
 
