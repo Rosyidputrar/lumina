@@ -1,16 +1,16 @@
 {
-  "name": "luminavantage",
+  "name": "lumina-backend",
   "version": "1.0.0",
   "private": true,
   "description": "LuminaVantage — AI market intelligence and automated execution terminal",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "node --test test/*.test.js",
-    "seed": "node src/tools/seed.js",
-    "backtest": "node src/tools/backtest-cli.js",
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "seed": "node --disable-warning=ExperimentalWarning src/tools/seed.js",
+    "backtest": "node --disable-warning=ExperimentalWarning src/tools/backtest-cli.js",
     "migrate:neon": "node src/tools/migrate-neon.js"
   },
   "engines": {

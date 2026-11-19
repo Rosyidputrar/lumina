@@ -40,6 +40,31 @@ export const DEFAULT_WATCHLIST = [
   { symbol: env.MT5_SYMBOL_US100 ?? 'US100.s', venue: 'mt5', label: 'Nasdaq 100', assetClass: 'index' },
 ];
 
+/**
+ * What the engine watches when no MT5 gateway is configured.
+ *
+ * The MT5 list above can only be quoted through a gateway; without one every
+ * instrument failed with "unknown venue: mt5" and the terminal sat empty. These
+ * instruments come from public market-data APIs that need no key, so a fresh
+ * install shows real prices and the paper engine has something to analyse.
+ */
+export const PUBLIC_WATCHLIST = [
+  { symbol: 'BTC-USDT', venue: 'okx', label: 'Bitcoin / USDT', assetClass: 'crypto' },
+  { symbol: 'ETH-USDT', venue: 'okx', label: 'Ether / USDT', assetClass: 'crypto' },
+  { symbol: 'SOL-USDT', venue: 'okx', label: 'Solana / USDT', assetClass: 'crypto' },
+  { symbol: 'EURUSD', venue: 'kraken', label: 'EUR / USD', assetClass: 'fx' },
+  { symbol: 'GBPUSD', venue: 'kraken', label: 'GBP / USD', assetClass: 'fx' },
+  { symbol: 'PAXGUSD', venue: 'kraken', label: 'Gold (PAXG) / USD', assetClass: 'metal' },
+];
+
+/** The default list: MT5 when a gateway is configured, public venues otherwise. */
+export function defaultWatchlist() {
+  return env.MT5_GATEWAY_URL && env.MT5_GATEWAY_KEY ? DEFAULT_WATCHLIST : PUBLIC_WATCHLIST;
+}
+
+/** The signing secret used when none is configured. Never valid in production. */
+export const DEV_LICENSE_SECRET = 'dev-only-change-me-please-32chars-min';
+
 export function loadConfig(overrides = {}) {
   const liveRequested = String(env.LUMINA_LIVE ?? '0') === '1';
   const brokerName = (env.LUMINA_BROKER ?? 'paper').toLowerCase();
@@ -114,7 +139,7 @@ export function loadConfig(overrides = {}) {
       historyBars: num(env.LUMINA_HISTORY, 400),
     },
 
-    watchlist: json(env.LUMINA_WATCHLIST, DEFAULT_WATCHLIST),
+    watchlist: json(env.LUMINA_WATCHLIST, defaultWatchlist()),
 
     // AI analyst (optional). Without a key the analyst runs a deterministic
     // local model — clearly labelled, never pretending to be an LLM.
@@ -122,7 +147,7 @@ export function loadConfig(overrides = {}) {
       provider: env.LUMINA_AI_PROVIDER ?? 'local',
       baseUrl: env.LUMINA_AI_BASE_URL ?? 'https://api.anthropic.com',
       apiKey: env.LUMINA_AI_KEY ?? env.ANTHROPIC_API_KEY ?? '',
-      model: env.LUMINA_AI_MODEL ?? 'claude-sonnet-4-20250514',
+      model: env.LUMINA_AI_MODEL ?? 'claude-sonnet-5-5',
     },
 
     // The continuous, cheap reader. DeepSeek Flash-class by design: it runs at
@@ -149,7 +174,7 @@ export function loadConfig(overrides = {}) {
       ownerCookie: 'lumina_owner',
       // IMPORTANT: set this on the owner's machine and keep it stable. Rotating
       // it invalidates every key already issued.
-      secret: env.LUMINA_LICENSE_SECRET ?? 'dev-only-change-me-please-32chars-min',
+      secret: env.LUMINA_LICENSE_SECRET || DEV_LICENSE_SECRET,
       ownerSecret: env.LUMINA_OWNER_SECRET ?? '',
       // A device that has never been activated cannot trade or ask the analyst.
       required: String(env.LUMINA_LICENSE_REQUIRED ?? '1') === '1',

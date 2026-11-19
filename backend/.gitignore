@@ -9,3 +9,4 @@ edge/metadata.json
 .attachments/
 .bench/
 node_modules/
+public/

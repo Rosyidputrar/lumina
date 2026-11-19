@@ -81,7 +81,10 @@ export class PaperBroker {
     const px = this.fillPrice(exitSide, price, position.qty, recentVolume);
     const fee = round((px * position.qty * (this.cfg.feeBps ?? 4)) / 10000, 8);
     const gross = position.side === 'long' ? (px - position.entry) * position.qty : (position.entry - px) * position.qty;
-    const pnl = round(gross - fee, 8);
+    // Net of both legs: the entry fee was paid when the position opened and
+    // belongs in the trade's result, the same way the backtester counts it.
+    const entryFee = Number(position.fees ?? 0) || 0;
+    const pnl = round(gross - fee - entryFee, 8);
 
     const orderId = this.store.insertOrder({
       userId,
@@ -107,8 +110,8 @@ export class PaperBroker {
       closedAt: this.clock(),
       closeReason: reason,
     });
-    this.store.addRealized(userId, pnl, fee);
-    return { exitPrice: px, pnl, fees: fee, gross: round(gross, 8) };
+    this.store.addRealized(userId, pnl, fee + entryFee);
+    return { exitPrice: px, pnl, fees: round(fee + entryFee, 8), gross: round(gross, 8) };
   }
 
   async cancel() {

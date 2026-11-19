@@ -413,7 +413,6 @@ export class ExecutionEngine {
       const quote = quotes.find((q) => q.symbol === pos.symbol);
       if (!quote) continue;
       const price = quote.price;
-      const atr = await this.atrFor(pos, quote);
       let exit = null;
 
       if (pos.stop && (pos.side === 'long' ? price <= pos.stop : price >= pos.stop)) exit = 'stop_loss';
@@ -472,7 +471,7 @@ export class ExecutionEngine {
     return closed;
   }
 
-  async atrFor(position, quote) {
+  async atrFor(position, quote, timeframe = this.config.loop.timeframe) {
     try {
       const candles = await this.market.candles({ venue: quote.venue, symbol: position.symbol, timeframe, limit: 120 });
       return I.snapshot(candles).atr;

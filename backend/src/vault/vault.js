@@ -99,7 +99,7 @@ export class Vault {
    * `Signals/XAUUSD 2024-11-02.md`. Updating keeps the same id so backlinks and
    * graph edges survive an edit.
    */
-  write({ path, content, title, tags = [], frontmatter = {}, source = 'system' }) {
+  write({ path, content, title, tags = [], frontmatter = {}, source = 'system', owner } = {}) {
     if (typeof content !== 'string' || !content.trim()) {
       throw new Error('vault.write: content is required');
     }
@@ -139,6 +139,8 @@ export class Vault {
       updatedAt: now(),
       bytes: Buffer.byteLength(body),
       reads: existingId ? this.notes.get(existingId)?.reads ?? 0 : 0,
+      // Who may edit or delete it: a licence id, or null for system notes.
+      owner: owner !== undefined ? owner : existingId ? this.notes.get(existingId)?.owner ?? null : null,
       pinned: Boolean(fm.pinned),
     };
 
@@ -291,7 +293,7 @@ export class Vault {
     const note = this.notes.get(id);
     if (!note) return null;
     note.reads++;
-    return { ...this.publicNote(note), body: note.body, frontmatter: note.frontmatter, links: note.links };
+    return { ...this.publicNote(note), body: note.body, frontmatter: note.frontmatter, links: note.links, owner: note.owner ?? null };
   }
 
   getByTitle(title) {

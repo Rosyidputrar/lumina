@@ -139,8 +139,10 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   const sseClients = new Set();
 
   const ctxOf = (req) => {
-    const ip = (req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'local').trim();
-    const secure = Boolean(req.headers['x-forwarded-proto'] === 'https');
+    const trustProxy = config.deploy?.trustProxy !== false;
+    const forwardedFor = trustProxy ? req.headers['x-forwarded-for']?.split(',')[0] : null;
+    const ip = String(forwardedFor ?? req.socket.remoteAddress ?? 'local').trim();
+    const secure = Boolean(req.socket.encrypted) || (trustProxy && req.headers['x-forwarded-proto'] === 'https');
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies[config.session.cookie];
     const user = token ? store.sessionUser(tokenHash(token)) : null;
@@ -201,7 +203,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
 
   function isOwner(ctx) {
     const raw = ctx.cookies?.[config.licence.ownerCookie];
-    if (!raw) return false;
+    if (!raw || !licensing.adminSecret) return false;
     const parts = String(raw).split('.');
     if (parts.length !== 3) return false;
     const [tag, tsStr, sig] = parts;
@@ -255,8 +257,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
    * error the customer sees.
    */
   function notifyActivation(ctx, info) {
-    const token = config.telegram?.token || process.env.LUMINA_TELEGRAM_TOKEN || '';
-    const chat = config.telegram?.chat || process.env.LUMINA_TELEGRAM_CHAT || '';
+    const token = config.deploy?.telegram?.token || process.env.LUMINA_TELEGRAM_TOKEN || '';
+    const chat = config.deploy?.telegram?.chat || process.env.LUMINA_TELEGRAM_CHAT || '';
     if (!token || !chat) return;
     const esc = (v) => String(v ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     const when = new Date().toISOString().slice(0, 16).replace('T', ' ');
@@ -387,28 +389,6 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     return cookie(config.licence.ownerCookie, value, { maxAge, secure: ctx.secure || crossSite, sameSite: crossSite ? 'None' : 'Lax', httpOnly: true });
   }
 
-  function signOwnerToken(lic, ts) {
-    const payload = 'owner.' + ts;
-    return payload + '.' + crypto.createHmac('sha256', lic.adminSecret).update(payload).digest('base64url');
-  }
-
-  function isOwner(ctx) {
-    const raw = ctx.cookies?.[config.licence.ownerCookie];
-    if (!raw) return false;
-    const parts = String(raw).split('.');
-    if (parts.length !== 3 || parts[0] !== 'owner') return false;
-    const [, tsStr, sig] = parts;
-    const ts = Number(tsStr);
-    if (!Number.isFinite(ts) || Date.now() - ts > 8 * 3600 * 1000) return false;
-    const expected = crypto.createHmac('sha256', licensing.adminSecret).update('owner.' + tsStr).digest('base64url');
-    return expected.length === sig.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
-  }
-
-  function requireOwnerSession(ctx) {
-    if (!isOwner(ctx)) throw new HttpError(401, 'owner passphrase required', 'OWNER_ONLY');
-    return true;
-  }
-
   /* --------------------- support rooms (chat → telegram) ------------------- */
 
   /**
@@ -420,8 +400,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   async function notifySupportMessage(user, text, role) {
     try {
       if (role !== 'user') return;
-      const token = config.telegram?.token || process.env.LUMINA_TELEGRAM_TOKEN || '';
-      const chat = config.telegram?.chat || process.env.LUMINA_TELEGRAM_CHAT || '';
+      const token = config.deploy?.telegram?.token || process.env.LUMINA_TELEGRAM_TOKEN || '';
+      const chat = config.deploy?.telegram?.chat || process.env.LUMINA_TELEGRAM_CHAT || '';
       if (!token || !chat) return;
       const roomId = store.getSetting(user.id, 'support_room', null);
       const account = store.account(user.id);
@@ -1090,9 +1070,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       instruments: selectedWatchlist(OWNER_IDENTITY).map((w) => ({ symbol: w.symbol, venue: w.venue, price: quotes.find((q) => q.symbol === w.symbol)?.price ?? null })),
       signals: store.latestSignalPerSymbol(OWNER_IDENTITY.id),
       live: config.account?.live === true || config.live === true,
-      currency: (await accountCurrency()).currency,
-      balance: (await accountCurrency()).balance,
-      leverage: (await accountCurrency()).leverage,
+      ...(await accountCurrency().then((a) => ({ currency: a.currency, balance: a.balance, leverage: a.leverage }))),
     };
   });
 
@@ -1899,6 +1877,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     }
     if (target !== undefined) {
       if (typeof target !== 'number' || !Number.isFinite(target)) throw new HttpError(400, 'target must be a number', 'BAD_REQUEST');
+      if (pos.side === 'long' && target <= pos.entry) throw new HttpError(400, 'target must be above entry for a long', 'BAD_TARGET');
+      if (pos.side === 'short' && target >= pos.entry) throw new HttpError(400, 'target must be below entry for a short', 'BAD_TARGET');
       patch.target = target;
     }
     store.updatePosition(pos.id, patch);
@@ -1940,8 +1920,13 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const triggerPrice = Number(body.triggerPrice);
     if (!symbol || !['buy', 'sell'].includes(side)) throw new HttpError(400, 'symbol and side (buy/sell) required', 'BAD_REQUEST');
     if (!(qty > 0) || !(triggerPrice > 0)) throw new HttpError(400, 'qty and triggerPrice must be positive', 'BAD_REQUEST');
-    const entry = selectedWatchlist(user).find((w) => w.symbol === symbol) ?? { symbol, venue: 'mt5' };
-    const order = store.addPendingOrder({ userId: user.id, symbol, venue: entry.venue ?? 'mt5', side, qty, triggerPrice, stop: Number(body.stop) || null, target: Number(body.target) || null, timeframe: userTradingPrefs(user).timeframe ?? null });
+    const entry = selectedWatchlist(user).find((w) => w.symbol === symbol);
+    if (!entry) throw new HttpError(400, 'that symbol is not in the selected execution scope', 'UNKNOWN_SYMBOL');
+    const pStop = Number(body.stop) || null;
+    const pTarget = Number(body.target) || null;
+    if (pStop && (side === 'buy' ? pStop >= triggerPrice : pStop <= triggerPrice)) throw new HttpError(400, side === 'buy' ? 'a buy stop must be below the trigger price' : 'a sell stop must be above the trigger price', 'BAD_STOP');
+    if (pTarget && (side === 'buy' ? pTarget <= triggerPrice : pTarget >= triggerPrice)) throw new HttpError(400, side === 'buy' ? 'a buy target must be above the trigger price' : 'a sell target must be below the trigger price', 'BAD_TARGET');
+    const order = store.addPendingOrder({ userId: user.id, symbol, venue: entry.venue ?? 'mt5', side, qty, triggerPrice, stop: pStop, target: pTarget, timeframe: userTradingPrefs(user).timeframe ?? null });
     store.audit({ userId: user.id, actor: 'user', action: 'pending_order_placed', detail: { symbol, side, qty, triggerPrice }, ip: ctx.ip });
     return { ok: true, order };
   });
@@ -1964,7 +1949,15 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
    * Fills waiting orders whose trigger price was touched. Delay is one engine
    * cycle (config.loop.intervalMs), not a manual poll — the loop already runs.
    */
+  let pendingPass = null;
   function processPendingOrders() {
+    // One pass at a time: a slow fill must not let the next cycle double-fill.
+    if (pendingPass) return pendingPass;
+    pendingPass = fillPendingOrders().finally(() => { pendingPass = null; });
+    return pendingPass;
+  }
+
+  async function fillPendingOrders() {
     try {
       const waiting = store.allWaitingOrders();
       for (const o of waiting) {
@@ -1974,7 +1967,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
         const touched = o.side === 'buy' ? price <= o.trigger_price : price >= o.trigger_price;
         if (!touched) continue;
         // Paper fill through the paper broker so the position ledger stays consistent.
-        const res = engine.paper().place({
+        const res = await engine.paper().place({
           userId: o.user_id,
           mode: 'paper',
           venue: o.venue,
@@ -1986,7 +1979,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
           stop: o.stop ?? undefined,
           target: o.target ?? undefined,
         });
-        store.fillPendingOrder(o.id, price);
+        if (!res?.positionId) continue;
+        store.fillPendingOrder(o.id, res.avgFill ?? price);
         store.audit({ userId: o.user_id, actor: 'engine', action: 'pending_order_filled', detail: { symbol: o.symbol, price, qty: o.qty }, ip: null });
         bus.emit('position', { action: 'open', symbol: o.symbol, side: o.side, qty: o.qty, price, pending: true });
       }
@@ -1998,7 +1992,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   // Run the fill pass right after each engine cycle.
   bus.on('cycle', processPendingOrders);
   // And once shortly after boot so pre-boot orders get a chance.
-  setTimeout(processPendingOrders, 5000).unref?.();
+  setTimeout(() => { processPendingOrders(); }, 5000).unref?.();
 
   /* -------------------------------- sweep --------------------------------- */
 
@@ -2209,13 +2203,15 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     // redeploy. On a failed health check the old broker stays in place.
     let swapped = false;
     try {
-      const key = decryptGatewayKey(account.secret);
+      const key = decryptCredential(account.secret);
       const gw = account.gateway ?? {};
       if (gw.url && key) {
         const live = new Mt5Broker({ baseUrl: gw.url, apiKey: key, demo: config.mt5?.demo ?? true, login: account.login, server: account.server, label: account.label });
         const ready = await live.ready().catch(() => ({ ok: false }));
         if (ready.ok) {
           engine.broker = live;
+          broker = live;
+          currencyCache = { at: 0, value: null };
           swapped = true;
         }
       }
@@ -2361,7 +2357,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       }
       const lesson = vaultLessonFromPosition(enriched);
       if (vault.resolve(lesson.path)) return; // idempotent
-      vault.write({ ...lesson, userId });
+      vault.write({ ...lesson, owner: null });
     } catch (e) {
       logger.warn?.(`[vault] lesson write failed: ${e.message}`);
     }
@@ -2508,6 +2504,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
 
     const state = await terminalState(user);
     const target = body.target === undefined || body.target === null || body.target === '' ? null : Number(body.target);
+    if (target !== null && (!Number.isFinite(target) || target <= 0)) throw new HttpError(400, 'target must be a positive number', 'BAD_TARGET');
+    if (target !== null && (side === 'buy' ? target <= quote.price : target >= quote.price)) throw new HttpError(400, side === 'buy' ? 'a buy target must be above the market' : 'a sell target must be below the market', 'BAD_TARGET');
     const riskPerUnit = Math.abs(quote.price - stop);
     const plan = {
       ok: true,
@@ -2624,20 +2622,25 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   /** Publish and unpublish are just visibility with a plainer name. */
   router.post('/api/files/:id/publish', async (ctx) => {
     const user = requireLicence(ctx);
+    if (!files) throw new HttpError(503, 'file storage not configured', 'DISABLED');
     const row = files.setVisibility(ctx.params.id, user.id, 'public');
+    if (!row) throw new HttpError(404, 'file not found', 'NOT_FOUND');
     store.audit({ userId: user.id, actor: 'user', action: 'file_published', detail: ctx.params.id, ip: ctx.ip });
     return { ok: true, file: row };
   });
 
   router.post('/api/files/:id/unpublish', async (ctx) => {
     const user = requireLicence(ctx);
+    if (!files) throw new HttpError(503, 'file storage not configured', 'DISABLED');
     const row = files.setVisibility(ctx.params.id, user.id, 'private');
+    if (!row) throw new HttpError(404, 'file not found', 'NOT_FOUND');
     store.audit({ userId: user.id, actor: 'user', action: 'file_unpublished', detail: ctx.params.id, ip: ctx.ip });
     return { ok: true, file: row };
   });
 
   router.del('/api/files/:id', async (ctx) => {
     const user = requireLicence(ctx);
+    if (!files) throw new HttpError(503, 'file storage not configured', 'DISABLED');
     const ok = await files.remove(ctx.params.id, user.id);
     if (!ok) throw new HttpError(404, 'file not found', 'NOT_FOUND');
     store.audit({ userId: user.id, actor: 'user', action: 'file_deleted', detail: ctx.params.id, ip: ctx.ip });
@@ -2776,8 +2779,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   router.post('/api/ai/ask', async (ctx) => {
     // Metered: this costs real compute, so it draws from the licence quota.
     const user = requireLicence(ctx, { metered: true, cost: config.licence.cost.ask });
-    const { question } = ctx.body ?? {};
-    if (!question || String(question).trim().length < 2) throw new HttpError(400, 'question required', 'BAD_REQUEST');
+    const question = String(ctx.body?.question ?? '').trim().slice(0, 2000);
+    if (question.length < 2) throw new HttpError(400, 'question required', 'BAD_REQUEST');
     const lim = expensiveLimiter.check(`ai:${user.id}`);
     if (!lim.ok) throw new HttpError(429, 'AI is rate limited', 'RATE_LIMITED');
     const quotes = engine.lastQuotes ?? [];
@@ -2787,7 +2790,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       try {
         const candles = await market.candles({ venue: entry.venue, symbol: entry.symbol, timeframe: aiTimeframe, limit: config.loop.historyBars });
         const { buildPlan } = await import('./analysis/engine.js');
-        plans.push(buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: config.loop.timeframe, label: entry.label }));
+        plans.push(buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: aiTimeframe, label: entry.label }));
       } catch {
         /* one unavailable symbol must not break the question */
       }
@@ -2802,7 +2805,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     store.addMessage({ userId: user.id, role: 'user', content: question, provider: analyst.providerLabel });
     notifySupportMessage(user, question, 'user');
     const headlines = (await loadNews()).items ?? [];
-    const answer = await analyst.ask({ question, plans, positions: acc.positions, risk, history, news: headlines });
+    const answer = await analyst.ask({ question, plans, positions: acc.positions, risk, history, news: headlines, userId: user.id });
     store.addMessage({ userId: user.id, role: 'assistant', content: answer.answer, context: { mode: answer.mode, plans: plans.filter((p) => p.ok).length }, provider: answer.provider });
     store.audit({ userId: user.id, actor: 'user', action: 'ai_question', detail: { mode: answer.mode, room: roomId }, ip: ctx.ip });
     return { ...answer, room: roomId };
@@ -2877,32 +2880,45 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
 
   router.del('/api/vault/note/:id', async (ctx) => {
     const user = requireLicence(ctx);
+    if (!vault) throw new HttpError(503, 'vault unavailable', 'DISABLED');
     const note = vault.get(ctx.params.id);
     if (!note) throw new HttpError(404, 'note not found', 'NOT_FOUND');
-    if (note.user_id && note.user_id !== user.id) throw new HttpError(403, 'not your note', 'FORBIDDEN');
+    if (!user.owner && note.owner !== user.id) throw new HttpError(403, 'only the author of a note can delete it', 'FORBIDDEN');
     vault.delete(ctx.params.id);
     store.audit({ userId: user.id, actor: 'user', action: 'vault_note_deleted', detail: ctx.params.id, ip: ctx.ip });
     return { ok: true };
   });
 
   router.get('/api/vault/note/:id', async (ctx) => {
-    requireLicence(ctx);
+    const user = requireLicence(ctx);
+    if (!vault) throw new HttpError(503, 'vault unavailable', 'DISABLED');
     const note = vault.get(ctx.params.id);
     if (!note) throw new HttpError(404, 'note not found', 'NOT_FOUND');
+    note.editable = Boolean(user.owner || note.owner === user.id);
+    delete note.owner;
     return { note, backlinks: vault.backlinks(note.id), outgoing: vault.outgoing(note.id), unlinked: vault.unlinkedMentions(note.id) };
   });
 
   router.get('/api/vault/search', async (ctx) => {
     requireLicence(ctx);
+    if (!vault) return { query: '', results: [] };
     const { q = '', limit } = ctx.query;
     return { query: q, results: vault.search(q, { limit: Math.min(Number(limit) || 20, 50) }) };
   });
 
   router.post('/api/vault/note', async (ctx) => {
     const user = requireLicence(ctx);
+    if (!vault) throw new HttpError(503, 'vault unavailable', 'DISABLED');
     const { content, path: notePath, title, tags } = ctx.body ?? {};
-    if (!content || typeof content !== 'string') throw new HttpError(400, 'content required', 'BAD_REQUEST');
-    const note = vault.write({ content, path: notePath, title, tags: Array.isArray(tags) ? tags : [], source: 'user' });
+    if (!content || typeof content !== 'string' || !content.trim()) throw new HttpError(400, 'content required', 'BAD_REQUEST');
+    if (title !== undefined && (typeof title !== 'string' || title.length > 160)) throw new HttpError(400, 'title must be text of at most 160 characters', 'BAD_REQUEST');
+    if (notePath !== undefined && (typeof notePath !== 'string' || notePath.length > 200 || notePath.includes('..'))) throw new HttpError(400, 'path is invalid', 'BAD_REQUEST');
+    const cleanTags = Array.isArray(tags) ? tags.map((t) => String(t).trim().toLowerCase().replace(/^#/, '')).filter((t) => /^[\p{L}\p{N}_/-]{1,40}$/u.test(t)).slice(0, 12) : [];
+    // Writing to an existing path updates that note, so the same author rule applies.
+    const existing = notePath ? vault.resolve(String(notePath).replace(/^\/+/, '')) : null;
+    const existingNote = existing ? vault.notes.get(existing) : null;
+    if (existingNote && !user.owner && existingNote.owner !== user.id) throw new HttpError(403, 'that note belongs to someone else', 'FORBIDDEN');
+    const note = vault.write({ content, path: notePath, title, tags: cleanTags, source: user.owner ? 'owner' : 'user', owner: user.id });
     store.audit({ userId: user.id, actor: 'user', action: 'vault_note_written', detail: { path: note.path, bytes: note.bytes }, ip: ctx.ip });
     bus.emit('vault', { action: 'write', title: note.title });
     return { note };
@@ -3058,9 +3074,10 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
   });
 
   router.get('/api/files/:id', async (ctx) => {
-    requireLicence(ctx);
+    const user = requireLicence(ctx);
     const f = files?.get(ctx.params.id);
-    if (!f) throw new HttpError(404, 'file not found', 'NOT_FOUND');
+    const mine = f && files.list(user.id).some((x) => x.id === f.id);
+    if (!f || (!mine && f.visibility !== 'public')) throw new HttpError(404, 'file not found', 'NOT_FOUND');
     return { file: f };
   });
 
@@ -3090,14 +3107,6 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     if (!f) throw new HttpError(404, 'file not found', 'NOT_FOUND');
     store.audit({ userId: user.id, actor: 'user', action: 'file_token_rotated', detail: { id: f.id }, ip: ctx.ip });
     return { file: f };
-  });
-
-  router.del('/api/files/:id', async (ctx) => {
-    const user = requireLicence(ctx);
-    const ok = await files?.remove(ctx.params.id, user.id);
-    if (!ok) throw new HttpError(404, 'file not found', 'NOT_FOUND');
-    store.audit({ userId: user.id, actor: 'user', action: 'file_deleted', detail: { id: ctx.params.id }, ip: ctx.ip });
-    return { ok: true };
   });
 
   router.get('/api/health', async () => {
@@ -3276,7 +3285,8 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       const stat = await fs.promises.stat(filePath);
       if (stat.isDirectory()) return serveStaticIndex(ctx, filePath);
       const ext = path.extname(filePath).toLowerCase();
-      const cache = ext === '.html' ? 'no-cache' : 'public, max-age=300, must-revalidate';
+      const hashed = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/.test(rel);
+      const cache = ext === '.html' ? 'no-cache' : hashed ? 'public, max-age=31536000, immutable' : 'public, max-age=300, must-revalidate';
       ctx.res.writeHead(200, {
         'content-type': MIME[ext] ?? 'application/octet-stream',
         'content-length': stat.size,
@@ -3285,7 +3295,9 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
         'referrer-policy': 'no-referrer',
         'x-frame-options': 'SAMEORIGIN',
       });
-      fs.createReadStream(filePath).pipe(ctx.res);
+      const rs = fs.createReadStream(filePath);
+      rs.on('error', () => ctx.res.destroy());
+      rs.pipe(ctx.res);
       return undefined;
     } catch (e) {
       if (e.code === 'ENOENT') return serveSpaFallback(ctx);

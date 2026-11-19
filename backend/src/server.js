@@ -5,7 +5,7 @@
  * Run:  node src/server.js
  * Env:  see README.md / src/config.js
  */
-import { config } from './config.js';
+import { config, DEV_LICENSE_SECRET } from './config.js';
 import crypto from 'node:crypto';
 import { Store } from './store.js';
 import { EventBus } from './bus.js';
@@ -25,6 +25,11 @@ import { Mt5Broker } from './execution/mt5-broker.js';
 
 export async function bootstrap(overrides = {}) {
   const cfg = { ...config, ...overrides };
+  // Fail closed: with the published development secret anyone can mint licence keys.
+  if (cfg.licence.secret === DEV_LICENSE_SECRET) {
+    if (cfg.env === 'production') throw new Error('LUMINA_LICENSE_SECRET must be set in production (32+ random characters)');
+    console.warn('  warning     LUMINA_LICENSE_SECRET is not set; using the development secret. Never deploy like this.');
+  }
   const store = new Store(cfg.dbFile);
   const bus = new EventBus();
   let broker = createBroker(cfg);
@@ -195,13 +200,8 @@ if (isMain) {
     console.log(banner);
     store.log('info', 'server', 'started', { port: cfg.port, live: cfg.live, broker: cfg.broker });
 
-    // Seed a demo account on first run so the terminal is not an empty shell.
-    if (!store.all('SELECT COUNT(*) c FROM users')[0].c) {
-      const { hashPassword } = await import('./auth.js');
-      const hp = hashPassword('lumina-demo-2024');
-      store.createUser({ email: 'demo@luminavantage.com', name: 'Demo Trader', passwordHash: hp.hash, salt: hp.salt, role: 'admin', startingEquity: cfg.account.startingEquity });
-      console.log('  seeded demo account: demo@luminavantage.com / lumina-demo-2024');
-    }
+    if (!cfg.licence.ownerSecret) console.log('  owner       disabled (set LUMINA_OWNER_SECRET to unlock the owner panel)');
+    if (!store.get('SELECT COUNT(*) c FROM licences')?.c) console.log('  licences    none issued yet — run `npm run seed` to mint a trial key');
 
     if (cfg.loop.enabled) {
       engine.start();
