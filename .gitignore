@@ -12,3 +12,4 @@ backend/data/
 .DS_Store
 .taste-skill/
 *.tsbuildinfo
+mt5-gateway.env

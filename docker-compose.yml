@@ -1,5 +1,10 @@
-# Coolify or plain Docker. Secrets come from the environment (a .env file next
-# to this one, or the platform's UI), never from this file.
+# Lumina, and optionally an MT5 gateway for live MetaTrader trading.
+#
+#   docker compose up -d --build                 # Lumina only (paper + public market data)
+#   docker compose --profile mt5 up -d --build   # Lumina + mt5-gateway
+#
+# Secrets come from backend/.env and mt5-gateway.env (both git-ignored), never
+# from this file.
 services:
   lumina:
     build: .
@@ -17,5 +22,38 @@ services:
     ports:
       - "127.0.0.1:8787:8787"
 
+  # MetaTrader 5 under Wine with an HTTP API: github.com/Gabriel-Rockson/mt5-gateway.
+  # Built from the upstream repository at a pinned commit; no code is copied
+  # into Lumina (the project publishes no licence for redistribution).
+  # Lumina reaches it inside this network at http://mt5:5001. Log into your
+  # broker once through the web desktop on 127.0.0.1:10004 (tunnel it over SSH
+  # on a server); the gateway stays logged in across restarts via its volume.
+  mt5:
+    profiles: ["mt5"]
+    build:
+      context: https://github.com/Gabriel-Rockson/mt5-gateway.git#9356f993a5281c5322903e0652e70b974fac4bad
+    restart: unless-stopped
+    env_file:
+      - path: ./mt5-gateway.env
+        required: true
+    volumes:
+      - mt5-config:/config
+    ports:
+      - "127.0.0.1:10004:3000"
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "10", "http://localhost:5001/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 300s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+
 volumes:
   lumina-data:
+  mt5-config:

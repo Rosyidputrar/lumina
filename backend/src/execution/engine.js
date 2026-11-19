@@ -200,7 +200,7 @@ export class ExecutionEngine {
           timeframe,
           limit: this.config.loop.historyBars,
         });
-        const plan = buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe, label: entry.label });
+        const plan = buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe, label: entry.label, assetClass: entry.assetClass, costs: this.paper().costs(entry) });
         const quote = quotes.find((q) => q.symbol === entry.symbol && q.venue === entry.venue);
         const enriched = { ...plan, quote: quote ?? null, candles: candles.slice(-120) };
         out.push(enriched);
@@ -308,33 +308,17 @@ export class ExecutionEngine {
         const signalId = this.persistSignal(user, plan, liveRoute ? 'live' : 'paper');
         let res;
         if (liveRoute) {
-          res = await this.broker.place({
-            userId: user.id,
-            symbol: plan.symbol,
-            side,
-            qty,
-            type: 'market',
-            stop: plan.stop,
-            target: plan.target1,
-            signalId,
-          });
-          if (!res?.avgFill) throw new Error('broker did not confirm a fill');
-          const protection = await this.broker.verifyProtection({ symbol: plan.symbol, side, qty, stop: plan.stop, target: plan.target1 });
-          if (!protection.ok) throw new Error(`broker protection not confirmed: ${protection.reason}`);
-          this.store.insertPosition({
-            userId: user.id,
-            mode: 'live',
-            venue: this.broker.id,
-            symbol: plan.symbol,
-            side: plan.direction,
-            qty,
-            entry: res.avgFill,
-            stop: plan.stop,
-            target: plan.target1,
-            fees: 0,
-            signalId,
-            brokerPositionId: res.brokerOrderId,
-          });
+          const order = { userId: user.id, symbol: plan.symbol, side, qty, type: 'market', stop: plan.stop, target: plan.target1, signalId };
+          res = typeof this.broker.placeProtected === 'function' ? await this.broker.placeProtected(order) : { ...(await this.broker.place(order)), protected: true };
+          if (!res?.avgFill) throw new Error('broker did not confirm a fill; check MetaTrader');
+          const record = (stop, target) =>
+            this.store.insertPosition({ userId: user.id, mode: 'live', venue: this.broker.id, symbol: plan.symbol, side: plan.direction, qty: res.filledQty || qty, entry: res.avgFill, stop, target, fees: 0, signalId, brokerPositionId: res.brokerOrderId });
+          if (!res.protected) {
+            if (res.flattened) throw new Error(`broker did not keep the stop (${res.reason}); the position was closed at market`);
+            record(null, null);
+            throw new Error(`UNPROTECTED live position ${plan.symbol} ticket ${res.brokerOrderId}: the stop was not kept and closing failed (${res.closeError})`);
+          }
+          record(res.stop ?? plan.stop, res.target ?? plan.target1);
         } else {
           res = await this.paper().place({
             userId: user.id,
@@ -427,7 +411,17 @@ export class ExecutionEngine {
           if (flip) exit = 'regime_invalidation';
           // trailing stop once 1R is banked
           const next = this.risk.manageStop(pos, price, snap.atr);
-          if (next) {
+          let held = true;
+          if (next && pos.mode === 'live' && this.broker?.modifyProtection) {
+            // A trailing stop only protects if the broker holds it.
+            try {
+              await this.broker.modifyProtection({ positionId: pos.broker_position_id, symbol: pos.symbol, stop: next });
+            } catch (e) {
+              held = false;
+              this.record('warn', `could not trail ${pos.symbol} at the broker: ${e.message}`);
+            }
+          }
+          if (next && held) {
             this.store.updatePosition(pos.id, { stop: next });
             this.record('info', `trailing stop ${pos.symbol} → ${next}`);
             this.bus.emit('position', { action: 'trail', symbol: pos.symbol, stop: next });

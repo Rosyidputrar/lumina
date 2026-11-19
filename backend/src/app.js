@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import { Mt5Broker } from './execution/mt5-broker.js';
 import { cookie, hashPassword, verifyPassword, newToken, tokenHash, parseCookies, RateLimiter } from './auth.js';
 import { ownerConsoleHtml } from './owner/console.js';
+import { STRATEGIES, currentStrategy, setStrategy } from './analysis/engine.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -1133,6 +1134,37 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     return { ok: true, ...res };
   });
 
+  /** The watchlist entry for a venue and symbol, for its label and asset class. */
+  function watchEntry(venue, symbol) {
+    return (config.watchlist ?? []).find((w) => w.symbol === symbol && (!venue || w.venue === venue)) ?? null;
+  }
+
+  /* -------------------------------- strategy ------------------------------- */
+
+  function strategyNow() {
+    return { strategy: currentStrategy(), profiles: Object.values(STRATEGIES) };
+  }
+
+  router.get('/api/strategy', async (ctx) => {
+    requireLicence(ctx);
+    return strategyNow();
+  });
+
+  router.get('/api/owner/strategy', async (ctx) => {
+    requireOwnerSession(ctx);
+    return strategyNow();
+  });
+
+  router.post('/api/owner/strategy', async (ctx) => {
+    requireOwnerSession(ctx);
+    const name = String(ctx.body?.strategy ?? '');
+    if (!STRATEGIES[name]) throw new HttpError(400, `strategy must be one of ${Object.keys(STRATEGIES).join(', ')}`, 'BAD_STRATEGY');
+    setStrategy(name);
+    store.setSetting(AI_SETTINGS_OWNER, 'strategy', name);
+    store.audit({ userId: null, actor: 'owner', action: 'strategy_set', detail: { strategy: name }, ip: ctx.ip });
+    return { ok: true, ...strategyNow() };
+  });
+
   /* --------------------------------- style -------------------------------- */
 
   /**
@@ -1762,7 +1794,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     if (!venue || !symbol) throw new HttpError(400, 'venue and symbol required', 'BAD_REQUEST');
     const candles = await market.candles({ venue, symbol, timeframe: tf, limit: config.loop.historyBars });
     const { buildPlan } = await import('./analysis/engine.js');
-    const plan = buildPlan(candles, { symbol, venue, timeframe: tf });
+    const plan = buildPlan(candles, { symbol, venue, timeframe: tf, assetClass: watchEntry(venue, symbol)?.assetClass });
     return { plan, candles: candles.slice(-200), series: await seriesTail(candles, 200) };
   });
 
@@ -1880,6 +1912,12 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       if (pos.side === 'long' && target <= pos.entry) throw new HttpError(400, 'target must be above entry for a long', 'BAD_TARGET');
       if (pos.side === 'short' && target >= pos.entry) throw new HttpError(400, 'target must be below entry for a short', 'BAD_TARGET');
       patch.target = target;
+    }
+    if (pos.mode === 'live') {
+      if (!broker?.modifyProtection) throw new HttpError(409, 'this broker cannot change SL/TP from here', 'NOT_SUPPORTED');
+      const r = await broker.modifyProtection({ positionId: pos.broker_position_id, symbol: pos.symbol, stop: patch.stop, target: patch.target });
+      if (r.stop !== null && r.stop !== undefined) patch.stop = r.stop;
+      if (r.target !== null && r.target !== undefined) patch.target = r.target;
     }
     store.updatePosition(pos.id, patch);
     store.audit({ userId: user.id, actor: 'user', action: 'position_amended', detail: { id: pos.id, ...patch }, ip: ctx.ip });
@@ -2016,7 +2054,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     for (const entry of selectedWatchlist(user)) {
       try {
         const candles = await market.candles({ venue: entry.venue, symbol: entry.symbol, timeframe: tf, limit: config.loop.historyBars });
-        const plan = buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: tf, label: entry.label });
+        const plan = buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: tf, label: entry.label, assetClass: entry.assetClass });
         const quote = (engine.lastQuotes ?? []).find((q) => q.symbol === entry.symbol);
         rows.push({
           symbol: entry.symbol,
@@ -2033,6 +2071,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
           target1: plan.target1 ?? null,
           regime: plan.regime?.regime ?? null,
           thesis: plan.thesis ?? null,
+          filtered: (plan.filtered ?? []).map((f) => `${f.playbook.replace(/_/g, ' ')} ${f.direction}: ${f.why}`),
         });
       } catch (e) {
         rows.push({ symbol: entry.symbol, venue: entry.venue, ok: false, reason: e.message });
@@ -2054,6 +2093,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       profitOnly,
       minRR,
       analysed: rows.length,
+      strategy: currentStrategy(),
       setups: kept,
       rejected: rows.filter((r) => !kept.includes(r)),
       at: Date.now(),
@@ -2549,36 +2589,33 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const qty = requestedQty;
     let res;
     if (useLive) {
-      res = await broker.place({
-        userId: user.id,
-        symbol,
-        side,
-        qty,
-        type: 'market',
-        stop: plan.stop,
-        target: plan.target1,
-      });
+      const order = { userId: user.id, symbol, side, qty, type: 'market', stop: plan.stop, target: plan.target1 };
+      res = typeof broker.placeProtected === 'function' ? await broker.placeProtected(order) : { ...(await broker.place(order)), protected: true };
       if (res?.avgFill === null || res?.avgFill === undefined) {
-        throw new HttpError(502, 'the broker did not confirm the fill', 'UNCONFIRMED_FILL');
+        throw new HttpError(502, 'the broker did not confirm the fill; check MetaTrader before retrying', 'UNCONFIRMED_FILL');
       }
-      const protection = await broker.verifyProtection({ symbol, side, qty, stop: plan.stop, target: plan.target1 });
-      if (!protection.ok) {
-        throw new HttpError(502, `broker did not confirm protection: ${protection.reason}`, 'PROTECTION_NOT_CONFIRMED');
+      const record = (stop, target) =>
+        store.insertPosition({
+          userId: user.id,
+          mode: 'live',
+          venue: broker.id,
+          symbol,
+          side: side === 'buy' ? 'long' : 'short',
+          qty: res.filledQty || qty,
+          entry: res.avgFill,
+          stop,
+          target,
+          brokerPositionId: res.brokerOrderId ?? res.orderId ?? null,
+          fees: res.fees ?? 0,
+        });
+      if (!res.protected) {
+        store.audit({ userId: user.id, actor: 'user', action: 'live_order_unprotected', detail: { symbol, ticket: res.brokerOrderId, reason: res.reason, flattened: res.flattened, closeError: res.closeError ?? null }, ip: ctx.ip });
+        if (res.flattened) throw new HttpError(502, `the broker did not keep the stop (${res.reason}); the position was closed at market`, 'PROTECTION_NOT_CONFIRMED');
+        // It is still open at the broker: track it so it can be seen and closed here.
+        record(null, null);
+        throw new HttpError(502, `the broker did not keep the stop (${res.reason}) and closing it failed (${res.closeError}). It is open without protection: close it now.`, 'UNPROTECTED_POSITION');
       }
-      store.insertPosition({
-        userId: user.id,
-        mode: 'live',
-        venue: broker.id,
-        symbol,
-        side: side === 'buy' ? 'long' : 'short',
-        qty,
-        entry: res.avgFill,
-        stop: plan.stop ?? null,
-        target: plan.target1 ?? null,
-        brokerPositionId: res.brokerOrderId ?? res.orderId ?? null,
-        fees: res.fees ?? 0,
-      });
-      res.positionId = res.positionId ?? null;
+      res.positionId = record(res.stop ?? plan.stop ?? null, res.target ?? plan.target1 ?? null);
     } else {
       res = await engine.paper().place({
         userId: user.id,
@@ -2720,7 +2757,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       for (const item of active) {
         try {
           const rows = await market.candles({ venue: item.venue, symbol: item.symbol, timeframe: tf, limit: config.loop.historyBars });
-          const p = buildPlan(rows, { symbol: item.symbol, venue: item.venue, timeframe: tf, label: item.label });
+          const p = buildPlan(rows, { symbol: item.symbol, venue: item.venue, timeframe: tf, label: item.label, assetClass: item.assetClass });
           if (p.ok) candidates.push({ item, rows, plan: p });
         } catch { /* one unavailable broker symbol does not stop the scan */ }
       }
@@ -2743,7 +2780,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
         if (!discovered) throw new HttpError(404, `${symbol} was not found in the broker symbol list`, 'BROKER_SYMBOL_NOT_FOUND');
       }
       candles = await market.candles({ venue: entry?.venue ?? 'mt5', symbol, timeframe: tf, limit: config.loop.historyBars });
-      plan = buildPlan(candles, { symbol, venue: entry?.venue ?? 'mt5', timeframe: tf, label: entry?.label ?? symbol });
+      plan = buildPlan(candles, { symbol, venue: entry?.venue ?? 'mt5', timeframe: tf, label: entry?.label ?? symbol, assetClass: entry?.assetClass });
     }
     if (!plan.ok) throw new HttpError(409, 'no qualifying setup for ' + symbol + ': ' + plan.reason, 'NO_SETUP', { reason: plan.reason, plan });
     const side = explicit ?? (plan.direction === 'long' ? 'buy' : plan.direction === 'short' ? 'sell' : null);
@@ -2790,7 +2827,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
       try {
         const candles = await market.candles({ venue: entry.venue, symbol: entry.symbol, timeframe: aiTimeframe, limit: config.loop.historyBars });
         const { buildPlan } = await import('./analysis/engine.js');
-        plans.push(buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: aiTimeframe, label: entry.label }));
+        plans.push(buildPlan(candles, { symbol: entry.symbol, venue: entry.venue, timeframe: aiTimeframe, label: entry.label, assetClass: entry.assetClass }));
       } catch {
         /* one unavailable symbol must not break the question */
       }
@@ -2818,7 +2855,7 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     if (!venue || !symbol) throw new HttpError(400, 'venue and symbol required', 'BAD_REQUEST');
     const candles = await market.candles({ venue, symbol, timeframe: tf, limit: config.loop.historyBars });
     const { buildPlan } = await import('./analysis/engine.js');
-    const plan = buildPlan(candles, { symbol, venue, timeframe: tf });
+    const plan = buildPlan(candles, { symbol, venue, timeframe: tf, assetClass: watchEntry(venue, symbol)?.assetClass });
     return { explanation: analyst.explainPlan(plan), plan };
   });
 
@@ -2829,12 +2866,15 @@ export function createApp({ store, market, bus, engine, analyst, expert = null, 
     const user = requireLicence(ctx, { metered: true, cost: config.licence.cost.backtest });
     const lim = expensiveLimiter.check(`bt:${user.id}`);
     if (!lim.ok) throw new HttpError(429, 'backtests are rate limited to 20/min', 'RATE_LIMITED');
-    const { venue, symbol, tf = '1h', bars = 1000, equity } = ctx.body ?? {};
+    const { venue, symbol, tf = '1h', bars = 1000, equity, strategy } = ctx.body ?? {};
     if (!venue || !symbol) throw new HttpError(400, 'venue and symbol required', 'BAD_REQUEST');
+    if (strategy !== undefined && !STRATEGIES[strategy]) throw new HttpError(400, `strategy must be one of ${Object.keys(STRATEGIES).join(', ')}`, 'BAD_STRATEGY');
     const candles = await market.candles({ venue, symbol, timeframe: tf, limit: Math.min(Number(bars) || 1000, 1000) });
     const result = backtester.run(candles, {
       symbol,
       venue,
+      assetClass: watchEntry(venue, symbol)?.assetClass,
+      strategy,
       timeframe: tf,
       equity: Number(equity) || store.account(user.id)?.starting_equity || config.account.startingEquity,
     });

@@ -52,7 +52,8 @@ export function mt5Provider({ broker }) {
         bid: toNum(t?.bid),
         ask: toNum(t?.ask),
         volume24h: toNum(t?.volume),
-        ts: t?.time ? new Date(t.time).getTime() : Date.now(),
+        // mt5-gateway sends epoch seconds (time) and milliseconds (time_msc).
+        ts: Number(t?.time_msc) > 0 ? Number(t.time_msc) : Number(t?.time) > 0 ? Number(t.time) * 1000 : Date.now(),
       };
     },
   };
@@ -121,13 +122,24 @@ export const providers = {
     id: 'okx',
     async candles({ symbol, timeframe, limit }) {
       const bar = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1d': '1D' }[timeframe] ?? '1H';
-      const url = `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(symbol)}&bar=${bar}&limit=${Math.min(limit, 300)}`;
+      const want = Math.min(Number(limit) || 300, 1500);
+      const url = `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(symbol)}&bar=${bar}&limit=${Math.min(want, 300)}`;
       const body = await getJson(url);
       if (body.code !== '0') throw new MarketError(`okx: ${body.msg}`, { symbol });
-      return (body.data ?? [])
-        .map((r) => ({ ts: Number(r[0]), open: toNum(r[1]), high: toNum(r[2]), low: toNum(r[3]), close: toNum(r[4]), volume: toNum(r[5]) }))
-        .filter(hasOhlc)
-        .sort((a, b) => a.ts - b.ts);
+      const parse = (r) => ({ ts: Number(r[0]), open: toNum(r[1]), high: toNum(r[2]), low: toNum(r[3]), close: toNum(r[4]), volume: toNum(r[5]) });
+      const rows = new Map((body.data ?? []).map((r) => [Number(r[0]), parse(r)]));
+      // The recent endpoint stops at 300 bars; older bars come from history-candles,
+      // 100 at a time, so a 1,000-bar backtest really gets 1,000 bars.
+      let oldest = Math.min(...rows.keys());
+      for (let page = 0; rows.size < want && page < 15 && Number.isFinite(oldest); page++) {
+        const older = await getJson(`https://www.okx.com/api/v5/market/history-candles?instId=${encodeURIComponent(symbol)}&bar=${bar}&limit=100&after=${oldest}`);
+        if (older.code !== '0' || !older.data?.length) break;
+        for (const r of older.data) rows.set(Number(r[0]), parse(r));
+        const next = Math.min(...older.data.map((r) => Number(r[0])));
+        if (next >= oldest) break;
+        oldest = next;
+      }
+      return [...rows.values()].filter(hasOhlc).sort((a, b) => a.ts - b.ts).slice(-want);
     },
     async ticker({ symbol }) {
       const url = `https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(symbol)}`;

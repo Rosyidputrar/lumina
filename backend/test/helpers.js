@@ -55,7 +55,7 @@ export function fakeProvider(series = {}) {
   };
 }
 
-export async function startApp({ ownerSecret = OWNER, watchlist } = {}) {
+export async function startApp({ ownerSecret = OWNER, watchlist, broker = null, providers = null, live = false } = {}) {
   const filesRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-files-'));
   const cfg = loadConfig();
   cfg.dbFile = ':memory:';
@@ -70,12 +70,14 @@ export async function startApp({ ownerSecret = OWNER, watchlist } = {}) {
   cfg.watcher = { ...cfg.watcher, model: '' };
   cfg.deploy = { ...cfg.deploy, frontendOrigin: '', publicOrigins: '', telegram: { token: '', chat: '' } };
   cfg.news = { feedUrl: '' };
-  cfg.mt5 = { ...cfg.mt5, baseUrl: '', apiKey: '' };
+  cfg.mt5 = { ...cfg.mt5, baseUrl: broker?.base ?? '', apiKey: broker?.apiKey ?? '' };
+  cfg.live = live;
+  cfg.broker = broker ? 'mt5' : 'paper';
   cfg.files = { ...cfg.files, root: filesRoot };
 
   const store = new Store(':memory:');
   const bus = new EventBus();
-  const market = new MarketData({ providersMap: { fake: fakeProvider() } });
+  const market = new MarketData({ providersMap: { fake: fakeProvider(), ...(providers ?? {}) } });
   const vault = new Vault(cfg.vault);
   vault.write({ path: 'Concepts/Risk Engine.md', title: 'Risk Engine', content: '# Risk Engine\n\nSizing from the stop.', tags: ['concept'], source: 'system' });
   const memory = new Memory({ vault, maxEpisodes: 200 });
@@ -84,9 +86,9 @@ export async function startApp({ ownerSecret = OWNER, watchlist } = {}) {
   const licensing = new Licensing({ store, secret: SECRET, adminSecret: ownerSecret });
   const analyst = new Analyst({ config: cfg, market, memory, logger: quiet });
   const expert = new ExpertAgent({ config: cfg, vault, logger: quiet });
-  const engine = new ExecutionEngine({ store, market, bus, config: cfg, broker: null, memory, expert, logger: quiet });
+  const engine = new ExecutionEngine({ store, market, bus, config: cfg, broker, memory, expert, logger: quiet });
   const backtester = new Backtester({ config: cfg });
-  const { server } = createApp({ store, market, bus, engine, analyst, expert, watcher: null, config: cfg, backtester, broker: null, vault, memory, files, licensing, logger: quiet });
+  const { server } = createApp({ store, market, bus, engine, analyst, expert, watcher: null, config: cfg, backtester, broker, vault, memory, files, licensing, logger: quiet });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
 
