@@ -1,0 +1,153 @@
+/*
+ * Lumina design tokens.
+ *
+ * Palette "Frost and slate" (dealt for fintech): an off-white ground, slate ink
+ * and one teal accent. The interface stays neutral; colour carries meaning only
+ * where it must — the action, profit and loss, and state.
+ * The evening grade is the same system on the inverse ground, chosen once on
+ * load (system preference) or by the toggle, never by scrolling.
+ */
+:root {
+  color-scheme: light;
+
+  /* ground and ink */
+  --bg: #f7f9fa;
+  --surface: #ecf0f2;
+  --card: #ffffff;
+  --card-raised: #ffffff;
+  --ink: #1f3038;
+  --ink-2: #3c4d55;
+  --muted: #5d6b72;
+  --line: rgb(31 48 56 / 0.13);
+  --line-strong: rgb(31 48 56 / 0.26);
+  --overlay: rgb(16 26 31 / 0.42);
+
+  /* the one accent, and what sits on it */
+  --action: #0d7480;
+  --action-hover: #0a5f69;
+  --action-ink: #ffffff;
+  --action-soft: rgb(13 116 128 / 0.1);
+
+  /* state */
+  --up: #12784a;
+  --up-soft: rgb(18 120 74 / 0.1);
+  --down: #b83228;
+  --down-soft: rgb(184 50 40 / 0.09);
+  --warn: #8a5a00;
+  --warn-soft: rgb(176 120 0 / 0.12);
+
+  /* type */
+  --font-text: 'Instrument Sans Variable', 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --t-h1: 28px;
+  --t-h2: 20px;
+  --t-h3: 16px;
+  --t-body: 15px;
+  --t-small: 14px;
+  --t-label: 13px;
+  --t-stat: 26px;
+  --tracking-tight: -0.022em;
+
+  /* spacing scale 4 → 128 */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+  --s-10: 128px;
+
+  /* radius: sharp, dealt for fintech */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-btn: 6px;
+
+  /* controls */
+  --ctl-h: 40px;
+  --ctl-h-lg: 44px;
+  --tap: 44px;
+
+  /* layout */
+  --nav-w: 232px;
+  --top-h: 60px;
+  --gut: 32px;
+
+  /* motion (one ease-out, no overshoot) */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --m-in: 150ms;
+  --m-out: 120ms;
+  --m-press: 90ms;
+  --m-panel: 200ms;
+
+  --shadow-pop: 0 18px 48px -18px rgb(16 26 31 / 0.35), 0 2px 6px rgb(16 26 31 / 0.06);
+}
+
+@media (max-width: 640px) {
+  :root {
+    --t-h1: 24px;
+    --t-stat: 22px;
+    --gut: 16px;
+    --top-h: 56px;
+  }
+}
+
+/* evening grade: the inverse ground of the same palette */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #10181c;
+  --surface: #162127;
+  --card: #1a262c;
+  --card-raised: #1f2d34;
+  --ink: #eef3f5;
+  --ink-2: #c9d2d6;
+  --muted: #9ea9ae;
+  --line: rgb(238 243 245 / 0.11);
+  --line-strong: rgb(238 243 245 / 0.22);
+  --overlay: rgb(4 8 10 / 0.62);
+
+  --action: #3fb3bf;
+  --action-hover: #66c6cf;
+  --action-ink: #0a1d21;
+  --action-soft: rgb(63 179 191 / 0.13);
+
+  --up: #45c98a;
+  --up-soft: rgb(69 201 138 / 0.12);
+  --down: #ff8a7d;
+  --down-soft: rgb(255 138 125 / 0.11);
+  --warn: #e9b85a;
+  --warn-soft: rgb(233 184 90 / 0.13);
+
+  --shadow-pop: 0 18px 48px -18px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #10181c;
+    --surface: #162127;
+    --card: #1a262c;
+    --card-raised: #1f2d34;
+    --ink: #eef3f5;
+    --ink-2: #c9d2d6;
+    --muted: #9ea9ae;
+    --line: rgb(238 243 245 / 0.11);
+    --line-strong: rgb(238 243 245 / 0.22);
+    --overlay: rgb(4 8 10 / 0.62);
+    --action: #3fb3bf;
+    --action-hover: #66c6cf;
+    --action-ink: #0a1d21;
+    --action-soft: rgb(63 179 191 / 0.13);
+    --up: #45c98a;
+    --up-soft: rgb(69 201 138 / 0.12);
+    --down: #ff8a7d;
+    --down-soft: rgb(255 138 125 / 0.11);
+    --warn: #e9b85a;
+    --warn-soft: rgb(233 184 90 / 0.13);
+    --shadow-pop: 0 18px 48px -18px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.3);
+  }
+}

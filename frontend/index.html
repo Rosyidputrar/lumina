@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-radius="sharp" data-buttons="arrow">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Lumina: a trading terminal with explainable signals</title>
+    <meta name="description" content="Paper and MT5 trading with a risk gate that sizes every order from its stop, explained signals, backtests and a research vault." />
+    <meta name="theme-color" content="#f7f9fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121c21" media="(prefers-color-scheme: dark)" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      // Apply the saved grade before first paint so the page never flashes.
+      try {
+        var t = localStorage.getItem('lumina.theme');
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Lumina needs JavaScript to run the terminal.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
